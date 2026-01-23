@@ -3,24 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_grayscale_histogram(image) -> None:
-    """Plot grayscale histogram of an image."""
-    # image: np.ndarray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-
-    if image is None:
-        msg = "Image not found or unreadable"
-        raise ValueError(msg)
-
-    hist: np.ndarray = cv2.calcHist(images=[image], channels=[0], mask=None, histSize=[256], ranges=[0, 256])
-
-    plt.figure()
-    plt.plot(hist)
-    plt.xlabel("Pixel Intensity")
-    plt.ylabel("Pixel Count")
-    plt.title("Grayscale Histogram")
-    plt.show()
-
-
 def overlay_mask_green(image, mask, alpha=0.4):
     """
     Sovrappone una maschera verde su un'immagine.
@@ -99,6 +81,23 @@ def plot_n_examples(folder_path, N=5, color_space="rgb", figsize=(15, 5)):
         titles.append(filename)
 
     plot_images_grid(images, titles=titles, cols=N, figsize=figsize)
+
+
+def plot_grayscale_histogram(image) -> None:
+    """Plot grayscale histogram of an image."""
+
+    if image is None:
+        msg = "Image not found or unreadable"
+        raise ValueError(msg)
+
+    hist: np.ndarray = cv2.calcHist(images=[image], channels=[0], mask=None, histSize=[256], ranges=[0, 256])
+
+    plt.figure()
+    plt.plot(hist)
+    plt.xlabel("Pixel Intensity")
+    plt.ylabel("Pixel Count")
+    plt.title("Grayscale Histogram")
+    plt.show()
 
 
 def plot_histogram(image, bins=256, title="Histogram", figsize=(8, 4)):
