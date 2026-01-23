@@ -71,7 +71,7 @@ def increase_saturation(img_bgr: np.ndarray, factor: float = 1.5) -> np.ndarray:
 
 def gamma_correction(img_bgr: np.ndarray, gamma: float) -> np.ndarray:
     img = img_bgr.astype(np.float32) / 255.0
-    img = np.power(img, gamma)
+    img = np.power(img, 1 / gamma)
     return (img * 255).astype(np.uint8)
 
 
@@ -146,13 +146,40 @@ def rotate(img: np.ndarray, angle: float) -> np.ndarray:
     return cv2.warpAffine(img, M, (w, h))
 
 
-def morphological_open(img, ksize=3):
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (ksize, ksize))
+import numpy as np
+
+
+def morphological_open(img, kernel_size=3, kernel_shape="rect"):
+    """
+    Esegue un'operazione morfologica di apertura (erosione + dilatazione).
+
+    Args:
+        img (np.ndarray): immagine di input
+        kernel_size (int): dimensione del kernel
+        kernel_shape (str): forma del kernel: 'rect', 'ellipse', 'cross'
+
+    Returns:
+        np.ndarray: immagine filtrata
+    """
+    shape_dict = {"rect": cv2.MORPH_RECT, "ellipse": cv2.MORPH_ELLIPSE, "cross": cv2.MORPH_CROSS}
+    kernel = cv2.getStructuringElement(shape_dict.get(kernel_shape, cv2.MORPH_RECT), (kernel_size, kernel_size))
     return cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel)
 
 
-def morphological_close(img, ksize=3):
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (ksize, ksize))
+def morphological_close(img, kernel_size=3, kernel_shape="rect"):
+    """
+    Esegue un'operazione morfologica di chiusura (dilatazione + erosione).
+
+    Args:
+        img (np.ndarray): immagine di input
+        kernel_size (int): dimensione del kernel
+        kernel_shape (str): forma del kernel: 'rect', 'ellipse', 'cross'
+
+    Returns:
+        np.ndarray: immagine filtrata
+    """
+    shape_dict = {"rect": cv2.MORPH_RECT, "ellipse": cv2.MORPH_ELLIPSE, "cross": cv2.MORPH_CROSS}
+    kernel = cv2.getStructuringElement(shape_dict.get(kernel_shape, cv2.MORPH_RECT), (kernel_size, kernel_size))
     return cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
 
 
@@ -181,8 +208,35 @@ def random_crop(img: np.ndarray, crop_size: tuple[int, int]) -> np.ndarray:
     return img[top : top + ch, left : left + cw]
 
 
-def sharpen(img, amount=1.2, sigma=1.0):
-    blur = cv2.GaussianBlur(img, (0, 0), sigma)
+import numpy as np
+
+
+def sharpen(img, amount=1.2, sigma=1.0, apply_blur=False, kernel_size=(5, 5)):
+    """
+    Applica sharpening all'immagine.
+
+    Parametri:
+        img: np.array
+            Immagine in input (BGR o grayscale)
+        amount: float
+            Intensità dello sharpening (default=1.2)
+        sigma: float
+            Deviazione standard per il Gaussian blur (default=1.0)
+        apply_blur: bool
+            Se True applica Gaussian blur prima di fare sharpening
+        kernel_size: tuple
+            Dimensione del kernel per Gaussian blur (default=(5,5))
+
+    Ritorna:
+        np.array: immagine sharpened
+    """
+    if apply_blur:
+        blur = cv2.GaussianBlur(img, kernel_size, sigma)
+    else:
+        # se non applichiamo blur, usiamo direttamente l'immagine originale
+        blur = img.copy()
+
+    # Unsharp mask
     return cv2.addWeighted(img, 1 + amount, blur, -amount, 0)
 
 
