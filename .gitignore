@@ -132,6 +132,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Environments
+/run
+/runs
+
 # Spyder project settings
 .spyderproject
 .spyproject
