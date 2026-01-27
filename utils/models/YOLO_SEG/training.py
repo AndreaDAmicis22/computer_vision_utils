@@ -107,16 +107,16 @@ def main():
             # Data augmentations
             # ----------------------------
             augment=True,
-            degrees=0.1,  # random rotation
-            translate=0.05,  # random translation
-            scale=0.05,  # random scale
-            shear=0.0,  # random shear
-            perspective=0.0005,  # perspective distortion
+            degrees=180,  # random rotation
+            translate=0.1,  # random translation
+            scale=0.1,  # random scale
+            shear=5,  # random shear
+            perspective=0.0,  # perspective distortion
             flipud=0.5,  # vertical flip probability
             fliplr=0.5,  # horizontal flip probability
-            mosaic=0.1,  # enable mosaic augmentation
-            mixup=0.2,  # enable mixup augmentation
-            copy_paste=0.2,  # enable copy-paste augmentation
+            mosaic=0.2,  # enable mosaic augmentation
+            mixup=0.0,  # enable mixup augmentation
+            copy_paste=0.0,  # enable copy-paste augmentation
             hsv_h=0.1,  # HSV hue augmentation
             hsv_s=0.1,  # HSV saturation augmentation
             hsv_v=0.1,  # HSV value augmentation
