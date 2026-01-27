@@ -35,7 +35,7 @@ class YOLO_CLS_ONNX:
         self.output_name = self.session.get_outputs()[0].name
 
     # -------------------------
-    # Preprocessing (YOLO style)
+    # Preprocessing
     # -------------------------
     def preprocess(self, image: np.ndarray) -> np.ndarray:
         if len(image.shape) == 2 or image.shape[2] == 1:
