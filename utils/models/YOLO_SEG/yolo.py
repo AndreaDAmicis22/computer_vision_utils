@@ -4,10 +4,10 @@ import onnxruntime as ort
 
 
 class YOLO_SEG_ONNX:
-    """YOLO SEG ONNX inference pipeline (bbox + mask)."""
-
-    def __init__(self, model_path: str, input_size: int = 640, use_cuda: bool = False) -> None:
+    def __init__(self, model_path, input_size=1024, use_cuda=False, conf_threshold=0.25, mask_threshold=0.5):
         self.input_size = input_size
+        self.conf_threshold = conf_threshold
+        self.mask_threshold = mask_threshold
 
         available_providers = ort.get_available_providers()
         if use_cuda and "CUDAExecutionProvider" in available_providers:
@@ -18,91 +18,117 @@ class YOLO_SEG_ONNX:
             providers = ["CPUExecutionProvider"]
 
         self.session = ort.InferenceSession(model_path, providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_name = self.session.get_outputs()[0].name  # Assumiamo output unico
 
-    def preprocess(self, image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
-        h, w = image.shape[:2]
-        scale = min(self.input_size / w, self.input_size / h)
+        # Estrazione info modello
+        model_inputs = self.session.get_inputs()
+        self.input_name = model_inputs[0].name
+        self.input_shape = model_inputs[0].shape  # [batch, 3, height, width]
 
-        nw, nh = int(w * scale), int(h * scale)
-        resized = cv2.resize(image, (nw, nh))
+    def preprocess(self, img):
+        """Resize e normalizzazione mantenendo l'aspect ratio (letterbox)."""
+        h, w = img.shape[:2]
+        scale = min(self.input_size / h, self.input_size / w)
+        nh, nw = int(h * scale), int(w * scale)
 
-        pad_x = (self.input_size - nw) // 2
-        pad_y = (self.input_size - nh) // 2
+        img_resized = cv2.resize(img, (nw, nh))
+        # Creiamo un canvas nero quadrato (letterbox)
+        input_img = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
+        input_img[:nh, :nw, :] = img_resized
 
-        canvas = np.full((self.input_size, self.input_size, 3), 114, dtype=np.uint8)
-        canvas[pad_y : pad_y + nh, pad_x : pad_x + nw] = resized
+        # Conversione HWC -> CHW e normalizzazione 0-1
+        input_img = input_img.transpose(2, 0, 1)
+        input_img = np.ascontiguousarray(input_img).astype(np.float32) / 255.0
+        return input_img[None, :, :, :], (h, w), scale
 
-        blob = canvas.astype(np.float32) / 255.0
-        blob = np.transpose(blob, (2, 0, 1))[None]
+    def postprocess(self, preds, orig_shape, scale):
+        p_boxes = preds[0][0]
+        p_proto = preds[1][0]
 
-        return blob, scale, pad_x, pad_y
+        # Estraiamo i punteggi massimi per ogni box
+        scores = np.max(p_boxes[:, 4:-32], axis=1)
+        mask = scores > self.conf_threshold
 
-    def infer(self, image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
-        """
-        Run inference on an image.
-        Returns:
-            detections_with_masks: (N, 6 + mask_dim)
-        """
-        blob, scale, pad_x, pad_y = self.preprocess(image)
-        outputs = self.session.run([self.output_name], {self.input_name: blob})
-        return outputs[0], scale, pad_x, pad_y
+        p_boxes = p_boxes[mask]
+        scores = scores[mask]  # Teniamo solo gli score validi
 
-    def postprocess(
-        self, outputs: np.ndarray, scale: float, pad_x: int, pad_y: int, score_thr: float = 0.5
-    ) -> list[dict]:
-        """
-        Convert raw outputs to bounding boxes and masks in original image coordinates.
-        Assumes outputs shape: (N, 6 + mask_dim) -> [x, y, w, h, score, class_id, mask...]
-        """
-        results = []
-        for det in outputs:
-            x, y, w, h, score, cls, *mask_flat = det
-            if score < score_thr:
-                continue
+        if len(p_boxes) == 0:
+            return [], [], [], []
 
-            # Undo padding and scaling
-            x = (x - pad_x) / scale
-            y = (y - pad_y) / scale
-            w /= scale
-            h /= scale
+        boxes = p_boxes[:, :4]
+        class_ids = np.argmax(p_boxes[:, 4:-32], axis=1)
+        mask_coeffs = p_boxes[:, -32:]
 
-            x1, y1 = int(x - w / 2), int(y - h / 2)
-            x2, y2 = int(x + w / 2), int(y + h / 2)
+        # Generazione maschere (logica del crop inclusa)
+        proto_h, proto_w = p_proto.shape[1:]
+        masks = (mask_coeffs @ p_proto.reshape(32, -1)).reshape(-1, proto_h, proto_w)
+        masks = 1 / (1 + np.exp(-masks))
 
-            # Reshape mask to (mask_h, mask_w) if needed
-            if mask_flat:
-                mask = np.array(mask_flat, dtype=np.float32)
-                mask_h = mask_w = int(np.sqrt(len(mask_flat)))  # assume square mask
-                mask = mask.reshape(mask_h, mask_w)
-                # Resize mask to bbox size
-                mask_resized = cv2.resize(mask, (x2 - x1, y2 - y1))
-                mask_binary = (mask_resized > 0.5).astype(np.uint8)
-            else:
-                mask_binary = None
+        full_masks = []
+        upscaled_h, upscaled_w = int(orig_shape[0] * scale), int(orig_shape[1] * scale)
 
-            results.append({"class_id": int(cls), "score": float(score), "bbox": [x1, y1, x2, y2], "mask": mask_binary})
+        for i, m in enumerate(masks):
+            m = cv2.resize(m, (self.input_size, self.input_size))
 
-        return results
+            # Clipping e Cropping
+            x1, y1, x2, y2 = np.clip(boxes[i], 0, self.input_size).astype(int)
+            crop_mask = np.zeros_like(m)
+            crop_mask[y1:y2, x1:x2] = 1
+            m = m * crop_mask
 
-    @staticmethod
-    def visualize(image: np.ndarray, detections: list[dict], class_names: list[str] | None = None) -> np.ndarray:
-        vis = image.copy()
-        for det in detections:
-            x1, y1, x2, y2 = det["bbox"]
-            score = det["score"]
-            cls_id = det["class_id"]
-            mask = det.get("mask")
+            m = m[:upscaled_h, :upscaled_w]
+            m = cv2.resize(m, (orig_shape[1], orig_shape[0]))
+            full_masks.append(m > self.mask_threshold)
 
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            label = f"{class_names[cls_id]} {score:.2f}" if class_names else f"{cls_id} {score:.2f}"
-            cv2.putText(vis, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+        boxes /= scale
+        return boxes, scores, class_ids, np.array(full_masks)
 
-            if mask is not None:
-                # Color overlay for mask
-                colored_mask = np.zeros_like(vis, dtype=np.uint8)
-                colored_mask[y1:y2, x1:x2, 1] = mask * 255
-                vis = cv2.addWeighted(vis, 1.0, colored_mask, 0.5, 0)
+    def predict(self, frame):
+        blob, orig_shape, scale = self.preprocess(frame)
+        outputs = self.session.run(None, {self.input_name: blob})
 
-        return vis
+        boxes, scores, class_ids, masks = self.postprocess(outputs, orig_shape, scale)
+
+        annotated_img = frame.copy()
+
+        # Calcoliamo dinamicamente la scala del font in base alla larghezza dell'immagine
+        # In questo modo su immagini grandi il font scala automaticamente
+        _h, w = frame.shape[:2]
+        font_scale = max(0.7, w / 1500)
+        thickness = max(2, int(w / 700))
+
+        for _i, (box, score, class_id, m) in enumerate(zip(boxes, scores, class_ids, masks, strict=False)):
+            x1, y1, x2, y2 = box.astype(int)
+
+            # 1. Colore (BGR) e Disegno BBox/Maschera
+            color = (255, 20, 0)  # Blu acceso
+            cv2.rectangle(annotated_img, (x1, y1), (x2, y2), color, thickness)
+
+            # Overlay maschera
+            annotated_img[m] = annotated_img[m] * 0.5 + np.array(color) * 0.5
+
+            # 2. Preparazione testo
+            label = f"ID:{class_id} {score:.2f}"
+
+            # Recuperiamo le dimensioni del testo con la nuova scala
+            (tw, th), _baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+
+            # Disegniamo lo sfondo del testo (leggermente più grande per dare margine)
+            # Spostiamo il testo sopra la box, o dentro se non c'è spazio in alto
+            ty1 = max(y1, th + 10)
+            cv2.rectangle(
+                annotated_img, (x1, ty1 - th - 10), (x1 + tw + 10, ty1), color, -1
+            )  # -1 riempie il rettangolo
+
+            # Scriviamo il testo in bianco con spessore maggiorato
+            cv2.putText(
+                annotated_img,
+                label,
+                (x1 + 5, ty1 - 7),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+                cv2.LINE_AA,
+            )
+
+        return annotated_img, masks

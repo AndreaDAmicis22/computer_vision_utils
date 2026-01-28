@@ -9,7 +9,7 @@ from ultralytics import YOLO, settings
 
 
 def write_stage_txt(path, items):
-    with open(path, "w") as file:
+    with open(path, "w") as file:  # noqa: PTH123
         file.writelines(items)
 
 
@@ -24,13 +24,13 @@ def prepare_annotations(root_path: Path):
     images_path = root_path / "data" / "images" / "Train"
     images_path.mkdir(parents=True)
     symlink_path = images_path / "nas"
-    os.symlink("/mnt/nas", symlink_path)
+    os.symlink("/mnt/nas", symlink_path)  # noqa: PTH211
 
     shutil.move(root_path / "labels", root_path / "data" / "labels")
 
     original_train_file_path = root_path / "Train.txt"
 
-    with open(original_train_file_path) as file:
+    with open(original_train_file_path) as file:  # noqa: PTH123
         items = file.readlines()
 
     items = ["./" + x for x in items]
@@ -52,7 +52,7 @@ def prepare_annotations(root_path: Path):
     write_stage_txt(test_file_path, x_test)
 
     original_config_file_path = root_path / "data.yaml"
-    with open(original_config_file_path) as file:
+    with open(original_config_file_path) as file:  # noqa: PTH123
         lines = file.readlines()
 
     lines = lines[1:-1]
@@ -60,7 +60,7 @@ def prepare_annotations(root_path: Path):
     lines.append("val: val.txt\n")
     lines.append("test: test.txt\n")
 
-    with open(original_config_file_path, "w") as file:
+    with open(original_config_file_path, "w") as file:  # noqa: PTH123
         file.writelines(lines)
 
     return tmp_path
@@ -69,7 +69,9 @@ def prepare_annotations(root_path: Path):
 def main():
     # Export dataset from CVAT as Ultralytics YOLO. Visit:
     # https://docs.cvat.ai/docs/manual/advanced/formats/format-yolo-ultralytics/
-    root_path = Path("/mnt/nas/datasets/tnr004/ricciolo/20260121")
+    root_path = Path("/mnt/nas/datasets/tnr004/ricciolo/20260127_seg")
+
+    mlflow.set_tracking_uri("file:/workspace/src/TNR004/projects/tnr005/mlruns")
 
     with prepare_annotations(root_path) as tmp_path:
         tmp_root_path = Path(tmp_path)
@@ -85,7 +87,7 @@ def main():
         results = model.train(
             # Train settings
             data=config_path,
-            imgsz=1504,  # Image size
+            imgsz=1024,  # Image size
             epochs=150,  # Number of training epochs
             batch=8,  # Batch size
             cache=False,
@@ -107,19 +109,19 @@ def main():
             # Data augmentations
             # ----------------------------
             augment=True,
-            degrees=180,  # random rotation
-            translate=0.1,  # random translation
-            scale=0.1,  # random scale
-            shear=5,  # random shear
+            degrees=0.0,  # random rotation
+            translate=0.01,  # random translation
+            scale=0.01,  # random scale
+            shear=0.0,  # random shear
             perspective=0.0,  # perspective distortion
             flipud=0.5,  # vertical flip probability
             fliplr=0.5,  # horizontal flip probability
             mosaic=0.2,  # enable mosaic augmentation
-            mixup=0.0,  # enable mixup augmentation
+            mixup=0.1,  # enable mixup augmentation
             copy_paste=0.0,  # enable copy-paste augmentation
-            hsv_h=0.1,  # HSV hue augmentation
-            hsv_s=0.1,  # HSV saturation augmentation
-            hsv_v=0.1,  # HSV value augmentation
+            hsv_h=0.0,  # HSV hue augmentation
+            hsv_s=0.0,  # HSV saturation augmentation
+            hsv_v=0.0,  # HSV value augmentation
         )
 
         mlflow.log_param("data_original", str(root_path / "data.yaml"))
@@ -131,15 +133,15 @@ def main():
         model = YOLO(results.save_dir / "weights/best.pt")
         model.val(
             data=config_path,
-            imgsz=1504,
+            imgsz=1024,
             split="test",
             save_json=True,
             half=False,
             project=project,
         )
 
-        model.export(format="onnx", imgsz=1504, simplify=True, nms=True, opset=18, dynamic=True)
-        model.export(format="openvino", imgsz=1504, optimize=True)
+        model.export(format="onnx", imgsz=1024, simplify=True, nms=True, opset=18, dynamic=True)
+        model.export(format="openvino", imgsz=1024, optimize=True)
 
 
 if __name__ == "__main__":

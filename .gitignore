@@ -135,6 +135,7 @@ venv.bak/
 # Environments
 /run
 /runs
+/mlruns
 
 # Spyder project settings
 .spyderproject
