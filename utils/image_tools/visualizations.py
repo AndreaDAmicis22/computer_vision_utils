@@ -148,6 +148,42 @@ def plot_image_comparison(image1, image2, title1="Original", title2="Processed",
     plt.show()
 
 
+def plot_bulk_comparison(list_a, list_b, title_a="Tipo A", title_b="Tipo B", max_imgs=10, figsize=(10, 4)):
+    """
+    Mostra una sequenza di confronti 2 a 2 tra due liste/array di immagini.
+
+    Args:
+        list_a (list/np.ndarray): Prima sequenza di immagini.
+        list_b (list/np.ndarray): Seconda sequenza di immagini.
+        title_a, title_b (str): Titoli per le colonne.
+        max_imgs (int): Limite massimo di coppie da visualizzare per non intasare la memoria.
+        figsize (tuple): Dimensione della singola riga di confronto.
+    """
+    # Determiniamo quante immagini mostrare
+    n_images = min(len(list_a), len(list_b), max_imgs)
+
+    # Creiamo una figura con n righe e 2 colonne
+    _fig, axes = plt.subplots(n_images, 2, figsize=(figsize[0], figsize[1] * n_images))
+
+    # Se c'è solo un'immagine, axes non è una matrice 2D, lo forziamo per coerenza
+    if n_images == 1:
+        axes = np.expand_dims(axes, axis=0)
+
+    for i in range(n_images):
+        # Immagine Tipo A
+        axes[i, 0].imshow(list_a[i], cmap="gray" if list_a[i].ndim == 2 else None)
+        axes[i, 0].set_title(f"{title_a} [{i}]")
+        axes[i, 0].axis("off")
+
+        # Immagine Tipo B
+        axes[i, 1].imshow(list_b[i], cmap="gray" if list_b[i].ndim == 2 else None)
+        axes[i, 1].set_title(f"{title_b} [{i}]")
+        axes[i, 1].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_mask_overlay_multiple(image, masks, alphas=None, colors=None, figsize=(6, 6)):
     """
     Sovrappone più maschere colorate su un'immagine.
