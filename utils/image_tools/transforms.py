@@ -39,6 +39,13 @@ def affine_transform(img, matrix: np.ndarray, output_shape: tuple[int, int]) -> 
     return cv2.warpAffine(img, matrix, output_shape)
 
 
+def create_ellipse_mask(img_shape, ellipse):
+    mask = np.zeros(img_shape[:2], dtype=np.uint8)
+    if ellipse is not None:
+        cv2.ellipse(mask, ellipse, 255, -1)
+    return mask
+
+
 def edge_sobel(img, dx=1, dy=1, ksize=3):
     return cv2.Sobel(img, cv2.CV_64F, dx, dy, ksize=ksize)
 
@@ -108,6 +115,33 @@ def apply_gaussian_filter(img: np.ndarray, ksize: int = 5, sigma: float = 1.0) -
     return cv2.GaussianBlur(img, (ksize, ksize), sigma)
 
 
+def fit_and_expand_ellipse(contour, min_points=10):
+    if contour is None or len(contour) < min_points:
+        return None
+
+    ellipse = cv2.fitEllipse(contour)
+    (cx, cy), (MA, ma), angle = ellipse
+
+    # min
+    MA *= 1.12
+    ma *= 1.12
+
+    # waterfall expansion
+    aspect_ratio = min(MA, ma) / max(MA, ma)
+    if aspect_ratio < 0.90:
+        if ma > MA:
+            MA *= 1.16
+        else:
+            ma *= 1.16
+    elif aspect_ratio < 0.93:
+        if ma > MA:
+            MA *= 1.14
+        else:
+            ma *= 1.14
+
+    return ((cx, cy), (MA, ma), angle)
+
+
 def fuse_and_enhance(
     self,
     imgs_bgr: list[np.ndarray],
@@ -137,6 +171,13 @@ def flip_vertical(img: np.ndarray) -> np.ndarray:
     return cv2.flip(img, 0)
 
 
+def get_largest_contour(th):
+    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        return max(contours, key=cv2.contourArea)
+    return None
+
+
 def rotate(img: np.ndarray, angle: float) -> np.ndarray:
     """
     Ruota l'immagine intorno al centro.
@@ -144,9 +185,6 @@ def rotate(img: np.ndarray, angle: float) -> np.ndarray:
     h, w = img.shape[:2]
     M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
     return cv2.warpAffine(img, M, (w, h))
-
-
-import numpy as np
 
 
 def morphological_open(img, kernel_size=3, kernel_shape="rect"):
@@ -190,6 +228,13 @@ def normalize(img: np.ndarray) -> np.ndarray:
     return (img - img.min()) / (img.max() - img.min() + 1e-8)
 
 
+def otsu_threshold(img, blur_ksize=(7, 7)):
+    blur = cv2.GaussianBlur(img, blur_ksize, 0)
+    blur_gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY) if len(blur.shape) == 3 else blur
+    _, th = cv2.threshold(blur_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return th
+
+
 def resize(img: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
     """
     Ridimensiona immagine mantenendo il canale.
@@ -206,9 +251,6 @@ def random_crop(img: np.ndarray, crop_size: tuple[int, int]) -> np.ndarray:
     top = random.randint(0, max(0, h - ch))
     left = random.randint(0, max(0, w - cw))
     return img[top : top + ch, left : left + cw]
-
-
-import numpy as np
 
 
 def sharpen(img, amount=1.2, sigma=1.0, apply_blur=False, kernel_size=(5, 5)):

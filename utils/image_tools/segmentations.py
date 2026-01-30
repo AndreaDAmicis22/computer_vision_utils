@@ -2,6 +2,46 @@ import cv2
 import numpy as np
 
 
+def get_skeleton(mask):
+    skeleton = np.zeros(mask.shape, np.uint8)
+    img = mask.copy()
+    element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+
+    while True:
+        eroded = cv2.erode(img, element)
+        temp = cv2.dilate(eroded, element)
+        temp = cv2.subtract(img, temp)
+        skeleton = cv2.bitwise_or(skeleton, temp)
+        img = eroded.copy()
+        if cv2.countNonZero(img) == 0:
+            break
+    return skeleton
+
+
+def get_yolo_mask(yolo_results, original_shape, segmenter_mask):
+    # create global yolo mask
+    full_mask = np.zeros(original_shape[:2], dtype=np.uint8)
+    for r in yolo_results:
+        full_mask = cv2.bitwise_or(full_mask, r._mask)
+
+    # delete detections outside the ellipse
+    return cv2.bitwise_and(full_mask, segmenter_mask)
+
+
+def segment_main_object(image_bgr: np.ndarray) -> np.ndarray:
+    """Segment the main object using classical CV (illumination correction + watershed).
+
+    Args:
+        image_bgr: Input BGR image.
+
+    Returns:
+        Binary mask of the main object (uint8: 0 or 255).
+    """
+    cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    return cv2.threshold(image_bgr, 30, 255, cv2.THRESH_BINARY)[1]
+
+
 def segment_by_histogram_peak(image: np.ndarray, min_intensity: int = 40) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Segment an image using the first significant histogram peak and convex hull.
@@ -115,17 +155,3 @@ def watershed_binarization(image_bgr: np.ndarray, min_distance_ratio: float = 0.
     binary_mask[markers > 1] = 255
 
     return binary_mask, markers
-
-
-def segment_main_object(image_bgr: np.ndarray) -> np.ndarray:
-    """Segment the main object using classical CV (illumination correction + watershed).
-
-    Args:
-        image_bgr: Input BGR image.
-
-    Returns:
-        Binary mask of the main object (uint8: 0 or 255).
-    """
-    cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-
-    return cv2.threshold(image_bgr, 30, 255, cv2.THRESH_BINARY)[1]

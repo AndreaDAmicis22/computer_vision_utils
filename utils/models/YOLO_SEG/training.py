@@ -77,13 +77,13 @@ def main():
         tmp_root_path = Path(tmp_path)
 
         config_path = tmp_root_path / "data.yaml"
-        project = "/workspace/src/TNR004/projects/tnr005/segmentation"
+        project = "/workspace/src/TNR004/projects/tnr005/segmentation-s"
 
         # Even when logging to MLFlow, ultralytics still saves file locally
         os.environ["MLFLOW_KEEP_RUN_ACTIVE"] = "true"
         settings.update({"mlflow": True})
 
-        model = YOLO("yolo11n-seg.pt")
+        model = YOLO("yolo11s-seg.pt")
         results = model.train(
             # Train settings
             data=config_path,
