@@ -1,6 +1,5 @@
 
 global.conf
-*.onnx
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -204,11 +203,17 @@ Thumbs.db
 *.sh
 
 # ==============================
+# Modelli
+# ==============================
+*.pt
+*.onnx
+*.data
+
+# ==============================
 # Altri file temporanei
 # ==============================
 *.log
 *.tmp
 *.swp
 *.bak
-*.pt
 
