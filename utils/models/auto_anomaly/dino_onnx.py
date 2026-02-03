@@ -1,3 +1,4 @@
+import random
 import time
 from collections import deque
 from pathlib import Path
@@ -199,9 +200,15 @@ class SlidingWindowAnomalyDetectorONNX:
     # -------------------------------------------------
     # Training
     # -------------------------------------------------
-    def fit(self, images_path: str, save_path: str):
+    def fit(self, images_path: str, save_path: str, make_sample: bool = False, n: int = 100):
         """
         Esegue il warmup/training estraendo feature dalle immagini e salvando lo stato.
+
+        Args:
+            images_path: Path della cartella immagini.
+            save_path: Path dove salvare lo stato.
+            make_sample: Se True, seleziona solo un numero limitato di immagini.
+            n: Numero di immagini da campionare se make_sample è True.
         """
         images_path = Path(images_path)
         save_path = Path(save_path)
@@ -212,6 +219,12 @@ class SlidingWindowAnomalyDetectorONNX:
         if not image_files:
             print(f"NOT FOUND IMAGES in {images_path}")
             return
+
+        if make_sample and len(image_files) > n:
+            print(f"Sampling attivo: selezione casuale di {n} immagini su {len(image_files)}.")
+            image_files = random.sample(image_files, n)
+        elif make_sample:
+            print(f"Campionamento richiesto ({n}), ma trovate solo {len(image_files)} immagini. Procedo con tutte.")
 
         for img_path in tqdm(image_files):
             try:

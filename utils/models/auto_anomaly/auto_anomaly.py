@@ -58,8 +58,8 @@ class AutoAnomaly:
     def _preprocess(self, image: np.ndarray, gamma=1.0):
         return self.gamma_correction(image, gamma)
 
-    def fit(self, images_path: str, save_path: str):
-        self.swad.fit(images_path, save_path)
+    def fit(self, images_path: str, save_path: str, make_sample: bool = False, n: int = 100):
+        self.swad.fit(images_path, save_path, make_sample, n)
 
     def predict(self, image: np.ndarray):
         self.try_load_warmup("/workspace/src/SPA006/")
