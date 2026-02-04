@@ -83,7 +83,7 @@ def main():
         os.environ["MLFLOW_KEEP_RUN_ACTIVE"] = "true"
         settings.update({"mlflow": True})
 
-        model = YOLO("yolo11s-seg.pt")
+        model = YOLO("yolo11n-seg.pt")
         results = model.train(
             # Train settings
             data=config_path,
@@ -141,7 +141,7 @@ def main():
         )
 
         model.export(format="onnx", imgsz=1024, simplify=True, nms=True, opset=18, dynamic=True)
-        model.export(format="openvino", imgsz=1024, optimize=True)
+        # model.export(format="openvino", imgsz=1024, optimize=True)
 
 
 if __name__ == "__main__":

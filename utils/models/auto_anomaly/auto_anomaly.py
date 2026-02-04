@@ -21,6 +21,9 @@ class AutoAnomaly:
         ramp_start: int = 32,
         ramp_end: int = 100,
         anomaly_threshold: float = 0.6,
+        use_custom_min_max: bool = False,
+        anomaly_min: int = 100,
+        anomaly_max: int = 1300,
     ):
         """
         Initializes the auto-anomaly detector based on Sliding Window and ONNX.
@@ -34,6 +37,9 @@ class AutoAnomaly:
             ramp_start (int): Starting value for the anomaly ramping (convergence param).
             ramp_end (int): End value for the anomaly ramping (convergence param).
             anomaly_threshold (float): Confidence threshold (0-1) above which is thresholded the filterd anomaly map.
+            use_custom_min_max (bool): flag to use custom min/max normalization.
+            anomaly_min (int): min parameter of anomaly map normalization.
+            anomaly_max (int): max parameter of anomaly map normalization.
         """
         self.swad = SlidingWindowAnomalyDetectorONNX(
             onnx_model_path="/workspace/src/utils/utils/models/auto_anomaly/assets/vit_large_dinov3_features.onnx",
@@ -45,6 +51,9 @@ class AutoAnomaly:
             ramp_start=ramp_start,
             ramp_end=ramp_end,
             anomaly_threshold=anomaly_threshold,
+            use_custom_min_max=use_custom_min_max,
+            anomaly_min=anomaly_min,
+            anomaly_max=anomaly_max,
         )
         self.warmup_window_size = warmup_window_size
         self.area_threshold = area_threshold

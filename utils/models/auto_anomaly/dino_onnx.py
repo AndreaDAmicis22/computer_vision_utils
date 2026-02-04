@@ -50,6 +50,7 @@ class SlidingWindowAnomalyDetectorONNX:
         start_gamma=0.3,
         area_threshold=200,
         global_area_threshold=200,
+        use_custom_min_max=False,
         anomaly_min=100.0,
         anomaly_max=1300.0,
         target_img_size=512,
@@ -63,6 +64,7 @@ class SlidingWindowAnomalyDetectorONNX:
         self.start_gamma = start_gamma
         self.area_threshold = area_threshold
         self.global_area_threshold = global_area_threshold
+        self.use_custom_min_max = use_custom_min_max
         self.anomaly_min = anomaly_min
         self.anomaly_max = anomaly_max
         self.anomaly_threshold = anomaly_threshold
@@ -309,8 +311,9 @@ class SlidingWindowAnomalyDetectorONNX:
                 self.good_patch_scores.extend(patch_scores)
             grid = int(np.sqrt(num_real_patches))
             anomaly_map = patch_scores.reshape(grid, grid)
-            self.anomaly_max = np.percentile(self.good_patch_scores, 99) * 2 + np.std(self.good_patch_scores)
-            self.anomaly_min = np.percentile(self.good_patch_scores, 99) + np.std(self.good_patch_scores)
+            if not self.use_custom_min_max:
+                self.anomaly_max = np.percentile(self.good_patch_scores, 99) * 2 + np.std(self.good_patch_scores)
+                self.anomaly_min = np.percentile(self.good_patch_scores, 99)
 
             anomaly_map_norm = np.clip(
                 (anomaly_map - self.anomaly_min) / (self.anomaly_max - self.anomaly_min + 1e-6), 0.0, 1.0
@@ -342,17 +345,19 @@ class SlidingWindowAnomalyDetectorONNX:
         if len(self.good_cls_distances) > 1:
             if not self.warmup_done:
                 p99 = np.percentile(self.good_cls_distances, 99)
-                std_cls = np.std(self.good_cls_distances)
+                np.std(self.good_cls_distances)
                 if idx <= self.ramp_start:
                     gamma = self.start_gamma
                 else:
                     gamma = self.start_gamma + (1.0 - self.start_gamma) * (
                         (idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
                     )
-                threshold = gamma * p99 + std_cls
+                # threshold = gamma * p99 + std_cls
+                threshold = gamma * p99
                 self.threshold = threshold
             else:
-                threshold = self.threshold
+                threshold = self.threshold - 10
+                self.threshold = threshold
         else:
             threshold = np.inf
 
@@ -407,6 +412,9 @@ class SlidingWindowAnomalyDetectorONNX:
             )
             return overlayed, mask, colored_map, True
 
+        overlayed = image.copy()
+        mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        colored_map = np.zeros_like(image)
         if last_out is None:
             return overlayed, mask, colored_map, False
 
