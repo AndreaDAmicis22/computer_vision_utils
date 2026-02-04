@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import onnxruntime as ort
+import openvino as ov
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
@@ -55,7 +56,6 @@ class SlidingWindowAnomalyDetectorONNX:
         anomaly_max=1300.0,
         target_img_size=512,
         anomaly_threshold=0.5,
-        providers=("OpenVINOExecutionProvider", "CPUExecutionProvider"),
     ):
         self.warmup_window_size = warmup_window_size
         self.inference_window_size = inference_window_size
@@ -71,11 +71,17 @@ class SlidingWindowAnomalyDetectorONNX:
         self.target_img_size = target_img_size
 
         # ONNX Runtime session
-
-        providers = [
-            ("OpenVINOExecutionProvider", {"device_type": "GPU", "precision": "FP16"}),
-            ("CPUExecutionProvider", {}),
-        ]
+        devices = ov.Core().available_devices
+        if "GPU" in devices:
+            providers = [
+                ("OpenVINOExecutionProvider", {"device_type": "GPU", "precision": "FP16"}),
+                ("CPUExecutionProvider", {}),
+            ]
+        else:
+            providers = [
+                ("OpenVINOExecutionProvider", {"device_type": "CPU", "precision": "FP32"}),
+                ("CPUExecutionProvider", {}),
+            ]
         if onnx_model_path is not None:
             self.session = ort.InferenceSession(
                 onnx_model_path,
