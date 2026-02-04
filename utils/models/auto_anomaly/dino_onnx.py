@@ -6,6 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import onnxruntime as ort
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 # from packages.redis_utils import redis_utils
@@ -181,6 +182,12 @@ class SlidingWindowAnomalyDetectorONNX:
             interpolation=cv2.INTER_LINEAR,
         )
 
+        # In parallel build colored map
+        if anomaly_map_resized.max() > 1.0:
+            anomaly_map_resized = anomaly_map_resized / 255.0
+        cm = plt.get_cmap("inferno")
+        colored_map = cm(anomaly_map_resized)
+
         # Create mask of regions above threshold
         mask = anomaly_map_resized > threshold
 
@@ -195,7 +202,7 @@ class SlidingWindowAnomalyDetectorONNX:
         # Blend overlay with original image
         alpha = 0.2
         overlayed = cv2.addWeighted(overlay, alpha, img_np, 1 - alpha, 0)
-        return overlayed, mask
+        return overlayed, mask, colored_map
 
     # -------------------------------------------------
     # Training
@@ -287,9 +294,9 @@ class SlidingWindowAnomalyDetectorONNX:
         if len(self.memory_cls_features) >= 2:
             # CLS distance
             cls_stack = np.stack(self.memory_cls_features)
-
             mean_cls, covinv_cls = compute_mean_cov_inv(cls_stack)
             dist_cls = mahalanobis_distance(cls_token[None, :], mean_cls, covinv_cls)[0]
+
             # Patch anomaly map
             patch_stack = np.concatenate(self.memory_patch_features, axis=0)
             mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
@@ -302,10 +309,12 @@ class SlidingWindowAnomalyDetectorONNX:
                 self.good_patch_scores.extend(patch_scores)
             grid = int(np.sqrt(num_real_patches))
             anomaly_map = patch_scores.reshape(grid, grid)
-            p5 = np.percentile(self.good_patch_scores, 5)
-            p95 = np.percentile(self.good_patch_scores, 95)
+            self.anomaly_max = np.percentile(self.good_patch_scores, 99) * 2 + np.std(self.good_patch_scores)
+            self.anomaly_min = np.percentile(self.good_patch_scores, 99) + np.std(self.good_patch_scores)
 
-            anomaly_map_norm = np.clip((anomaly_map - p5) / (p95 - p5 + 1e-6), 0.0, 1.0)
+            anomaly_map_norm = np.clip(
+                (anomaly_map - self.anomaly_min) / (self.anomaly_max - self.anomaly_min + 1e-6), 0.0, 1.0
+            )
             anomaly_map_up = cv2.resize(
                 anomaly_map_norm,
                 (x.shape[3], x.shape[2]),
@@ -332,7 +341,7 @@ class SlidingWindowAnomalyDetectorONNX:
         # Dynamic threshold
         if len(self.good_cls_distances) > 1:
             if not self.warmup_done:
-                p99 = np.percentile(self.good_cls_distances, 70)
+                p99 = np.percentile(self.good_cls_distances, 99)
                 std_cls = np.std(self.good_cls_distances)
                 if idx <= self.ramp_start:
                     gamma = self.start_gamma
@@ -341,7 +350,6 @@ class SlidingWindowAnomalyDetectorONNX:
                         (idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
                     )
                 threshold = gamma * p99 + std_cls
-                # threshold = gamma * p70
                 self.threshold = threshold
             else:
                 threshold = self.threshold
@@ -380,7 +388,7 @@ class SlidingWindowAnomalyDetectorONNX:
         out = self._process_single_image(image)
         last_out = out
 
-        drawn_contours = np.zeros(image.shape[:2], np.uint8)
+        np.zeros(image.shape[:2], np.uint8)
 
         print(  # noqa: T201
             f"Image {out['idx']} | "
@@ -391,15 +399,15 @@ class SlidingWindowAnomalyDetectorONNX:
         )
 
         if out["is_anomaly"]:
-            overlayed, mask = self._create_anomaly_image_threshold(
+            overlayed, mask, colored_map = self._create_anomaly_image_threshold(
                 out["idx"],
                 out["image"],
                 out["anomaly_map_norm"],
                 threshold=self.anomaly_threshold,
             )
-            return overlayed, mask, True
+            return overlayed, mask, colored_map, True
 
         if last_out is None:
-            return image, drawn_contours, False
+            return overlayed, mask, colored_map, False
 
-        return image, drawn_contours, False
+        return overlayed, mask, colored_map, False
