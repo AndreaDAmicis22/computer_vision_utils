@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 class AutoAnomaly:
     def __init__(
         self,
+        onnx_model_path: str = "/home/aisent/Desktop/dev/utils/utils/models/auto_anomaly/assets/vit_large_dinov3_features.onnx",
         warmup_window_size: int = 12,
         inference_window_size: int = 12,
         area_threshold: int = 1200,
@@ -42,7 +43,7 @@ class AutoAnomaly:
             anomaly_max (int): max parameter of anomaly map normalization.
         """
         self.swad = SlidingWindowAnomalyDetectorONNX(
-            onnx_model_path="/workspace/src/utils/utils/models/auto_anomaly/assets/vit_large_dinov3_features.onnx",
+            onnx_model_path=onnx_model_path,
             warmup_window_size=warmup_window_size,
             inference_window_size=inference_window_size,
             area_threshold=area_threshold,
@@ -110,7 +111,7 @@ class AutoAnomaly:
             is_anomalous (bool): Boolean flag indicating if an anomaly was detected.
                                  Always False during the warmup phase.
         """
-        self.try_load_warmup("/workspace/src/SPA006/")
+        self.try_load_warmup("/home/aisent/Desktop/dev/SPA006")
         out_img, drawn_contours, colored_map, is_anomalous = self.swad.run(image)
         if self.warmup_counter < self.warmup_window_size:
             self.warmup_counter += 1

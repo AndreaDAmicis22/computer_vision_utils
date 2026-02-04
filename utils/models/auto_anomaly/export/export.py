@@ -1,8 +1,9 @@
 import torch
-
 from dino_wrapper import DinoV3FeatureWrapper
 
-dummy = torch.randn(1, 3, 512, 512)
+IMGSZ = 512
+
+dummy = torch.randn(1, 3, IMGSZ, IMGSZ)
 
 wrapper = DinoV3FeatureWrapper()
 
@@ -13,21 +14,10 @@ with torch.no_grad():
 torch.onnx.export(
     wrapper.eval(),
     dummy,
-    "vit_large_dinov3_features.onnx",
+    f"vit_large_dinov3_features_{IMGSZ}.onnx",
     input_names=["input"],
     output_names=["cls", "patches"],
     opset_version=18,
     do_constant_folding=True,
     verify=False,
 )
-
-# torch.onnx.export(
-#     wrapper.eval(),
-#     dummy,
-#     "vit_large_dinov3_features.onnx",
-#     input_names=["input"],
-#     output_names=["tokens"],
-#     opset_version=18,
-#     do_constant_folding=True,
-#     verify=False,
-# )

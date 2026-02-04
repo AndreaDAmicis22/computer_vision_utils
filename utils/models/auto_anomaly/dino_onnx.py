@@ -54,7 +54,7 @@ class SlidingWindowAnomalyDetectorONNX:
         use_custom_min_max=False,
         anomaly_min=100.0,
         anomaly_max=1300.0,
-        target_img_size=512,
+        target_img_size=464,
         anomaly_threshold=0.5,
     ):
         self.warmup_window_size = warmup_window_size
@@ -82,6 +82,18 @@ class SlidingWindowAnomalyDetectorONNX:
                 ("OpenVINOExecutionProvider", {"device_type": "CPU", "precision": "FP32"}),
                 ("CPUExecutionProvider", {}),
             ]
+
+        print(list(providers))
+        if onnx_model_path is not None:
+            self.session = ort.InferenceSession(
+                onnx_model_path,
+                providers=list(providers),
+            )
+
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_names = [o.name for o in self.session.get_outputs()]
+            assert len(self.output_names) == 2, "ONNX model must output (cls, patches)"
+
         if onnx_model_path is not None:
             self.session = ort.InferenceSession(
                 onnx_model_path,
