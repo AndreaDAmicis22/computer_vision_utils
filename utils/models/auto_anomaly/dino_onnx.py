@@ -1,5 +1,5 @@
 import random
-import time
+import threading
 from collections import deque
 from pathlib import Path
 
@@ -50,12 +50,12 @@ class SlidingWindowAnomalyDetectorONNX:
         ramp_end=50,
         start_gamma=0.3,
         area_threshold=200,
-        global_area_threshold=200,
+        global_area_threshold=300,
         use_custom_min_max=False,
         anomaly_min=100.0,
         anomaly_max=1300.0,
-        target_img_size=464,
-        anomaly_threshold=0.5,
+        target_img_size=512,
+        anomaly_threshold=0.6,
     ):
         self.warmup_window_size = warmup_window_size
         self.inference_window_size = inference_window_size
@@ -110,6 +110,12 @@ class SlidingWindowAnomalyDetectorONNX:
         self.good_cls_distances = deque(maxlen=inference_window_size)
         self.good_patch_scores = deque(maxlen=inference_window_size)
 
+        self.cached_mean_cls = None
+        self.cached_covinv_cls = None
+        self.cached_mean_patch = None
+        self.cached_covinv_patch = None
+
+        self.threshold = 0
         self.global_idx = 0
         self.warmup_done = False
         self._warmup_state_exists: bool = False
@@ -149,6 +155,7 @@ class SlidingWindowAnomalyDetectorONNX:
             good_patch_scores=np.array(self.good_patch_scores),
             threshold=self.threshold,
         )
+        print(f"Salvato stato in: {path}")
 
     def load_warmup(self, path):
         data = np.load(path)
@@ -163,7 +170,6 @@ class SlidingWindowAnomalyDetectorONNX:
             [data["patch_stack"]],
             maxlen=self.inference_window_size,
         )
-
         self.good_cls_distances = deque(
             data["good_cls_distances"],
             maxlen=self.inference_window_size,
@@ -172,10 +178,15 @@ class SlidingWindowAnomalyDetectorONNX:
             data["good_patch_scores"],
             maxlen=self.inference_window_size,
         )
+        cls_stack = np.stack(list(self.memory_cls_features))
+        self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
+        patch_stack = self.memory_patch_features[0]
+        self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
 
         self.threshold = float(data["threshold"])
         self.warmup_done = True
         self._warmup_state_exists = True
+        print(f"Caricato stato da: {path}")
 
     def _create_anomaly_image_threshold(
         self,
@@ -220,43 +231,50 @@ class SlidingWindowAnomalyDetectorONNX:
         mask = cv2.threshold(mask, 0, 255, cv2.THRESH_OTSU)[1]
 
         # Blend overlay with original image
-        alpha = 0.2
+        alpha = 0.3
         overlayed = cv2.addWeighted(overlay, alpha, img_np, 1 - alpha, 0)
         return overlayed, mask, colored_map
 
     # -------------------------------------------------
     # Training
     # -------------------------------------------------
-    def fit(self, images_path: str, save_path: str, make_sample: bool = False, n: int = 100):
-        """
-        Esegue il warmup/training estraendo feature dalle immagini e salvando lo stato.
+    def fit_all(self, images_path: str, save_path: str):
+        """Esegue il training su tutte le immagini presenti nella cartella."""
+        image_files = self._get_image_files(images_path)
+        return self._fit(image_files, save_path)
 
-        Args:
-            images_path: Path della cartella immagini.
-            save_path: Path dove salvare lo stato.
-            make_sample: Se True, seleziona solo un numero limitato di immagini.
-            n: Numero di immagini da campionare se make_sample è True.
-        """
-        images_path = Path(images_path)
-        save_path = Path(save_path)
+    def fit_sample(self, images_path: str, save_path: str, n: int = 100):
+        """Esegue il training su un campione casuale di N immagini."""
+        image_files = self._get_image_files(images_path)
 
-        valid_extensions = (".jpg", ".jpeg", ".png", ".bmp")
-        image_files = [f for f in images_path.iterdir() if f.suffix.lower() in valid_extensions]
-
-        if not image_files:
-            print(f"NOT FOUND IMAGES in {images_path}")
-            return
-
-        if make_sample and len(image_files) > n:
+        if len(image_files) > n:
             print(f"Sampling attivo: selezione casuale di {n} immagini su {len(image_files)}.")
             image_files = random.sample(image_files, n)
-        elif make_sample:
+        else:
             print(f"Campionamento richiesto ({n}), ma trovate solo {len(image_files)} immagini. Procedo con tutte.")
 
-        for img_path in tqdm(image_files):
+        return self._fit(image_files, save_path)
+
+    def _get_image_files(self, images_path: str) -> list:
+        """Helper interno per recuperare i path delle immagini."""
+        path = Path(images_path)
+        valid_extensions = (".jpg", ".jpeg", ".png", ".bmp")
+        files = [f for f in path.iterdir() if f.suffix.lower() in valid_extensions]
+
+        if not files:
+            msg = f"Nessuna immagine trovata in {images_path}"
+            raise FileNotFoundError(msg)
+        return files
+
+    def _fit(self, image_files: list, save_path: str):
+        """
+        Metodo core che esegue il training effettivo su una lista di file.
+        """
+        save_path = Path(save_path)
+
+        for img_path in tqdm(image_files, desc="Training"):
             try:
                 image_bgr = cv2.imread(str(img_path))
-
                 if image_bgr is None:
                     print(f"Impossibile leggere: {img_path}")
                     continue
@@ -265,20 +283,18 @@ class SlidingWindowAnomalyDetectorONNX:
 
                 x = self._preprocess(image_rgb)
                 patch_tokens, cls_token = self._extract_features(x)
-                if len(self.memory_cls_features) >= 2:
-                    # CLS distance
-                    cls_stack = np.stack(self.memory_cls_features)
 
+                if len(self.memory_cls_features) >= 2:
+                    cls_stack = np.stack(self.memory_cls_features)
                     mean_cls, covinv_cls = compute_mean_cov_inv(cls_stack)
                     dist_cls = mahalanobis_distance(cls_token[None, :], mean_cls, covinv_cls)[0]
-                    # Patch anomaly map
+
                     patch_stack = np.concatenate(self.memory_patch_features, axis=0)
                     mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
                     num_real_patches = (self.target_img_size // 16) ** 2
                     patch_tokens = patch_tokens[-num_real_patches:]
                     diff = patch_tokens - mean_patch
                     patch_scores = np.einsum("nd,df,nf->n", diff, covinv_patch, diff)
-
                     self.good_patch_scores.extend(patch_scores)
                 else:
                     dist_cls = 0.0
@@ -291,14 +307,17 @@ class SlidingWindowAnomalyDetectorONNX:
                 print(f"Errore durante l'elaborazione di {img_path}: {e}")
                 continue
 
-        std_cls = np.std(self.good_cls_distances)
-        p99 = np.percentile(self.good_cls_distances, 99)
-        self.threshold = 1.0 * p99 + std_cls
+        # --- Calcolo soglie e salvataggio ---
+        if self.good_cls_distances:
+            std_cls = np.std(self.good_cls_distances)
+            p99 = np.percentile(self.good_cls_distances, 99)
+            self.threshold = 1.0 * p99 + std_cls
 
-        self._save_warmup(path=save_path)
-        self.warmup_done = True
-        print(f"Warmup completato con {len(self.memory_cls_features)} immagini.")
-        print(f"Stato salvato in: {save_path}")
+            self._save_warmup(path=save_path)
+            self.warmup_done = True
+            print(f"Warmup completato con {len(self.memory_cls_features)} immagini.")
+        else:
+            print("Errore: Nessuna feature estratta correttamente. Training fallito.")
 
     # -------------------------------------------------
     # Single image processing
@@ -306,93 +325,70 @@ class SlidingWindowAnomalyDetectorONNX:
     def _process_single_image(self, image: np.ndarray):
         self.global_idx += 1
         idx = self.global_idx
-
         x = self._preprocess(image)
-        time.time()
         patch_tokens, cls_token = self._extract_features(x)
+        num_real_patches = (self.target_img_size // 16) ** 2
 
-        if len(self.memory_cls_features) >= 2:
-            # CLS distance
-            cls_stack = np.stack(self.memory_cls_features)
-            mean_cls, covinv_cls = compute_mean_cov_inv(cls_stack)
-            dist_cls = mahalanobis_distance(cls_token[None, :], mean_cls, covinv_cls)[0]
+        dist_cls = 0.0
+        total_area = 0.0
+        anomaly_map_norm = None
+        filtered_mask = None
+        patch_scores = np.zeros(num_real_patches, dtype=np.float32)
 
-            # Patch anomaly map
-            patch_stack = np.concatenate(self.memory_patch_features, axis=0)
-            mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
-            num_real_patches = (self.target_img_size // 16) ** 2
-            patch_tokens = patch_tokens[-num_real_patches:]
-            diff = patch_tokens - mean_patch
-            patch_scores = np.einsum("nd,df,nf->n", diff, covinv_patch, diff)
+        # --- FASE 1: INFERENZA
+        if self.cached_mean_cls is not None and self.cached_mean_patch is not None and self.warmup_done:
+            # CLS
+            dist_cls = mahalanobis_distance(cls_token[None, :], self.cached_mean_cls, self.cached_covinv_cls)[0]
 
-            if not self.warmup_done:
-                self.good_patch_scores.extend(patch_scores)
+            # Patch
+            p_tokens_target = patch_tokens[-num_real_patches:]
+            diff = p_tokens_target - self.cached_mean_patch
+            patch_scores = np.einsum("nd,df,nf->n", diff, self.cached_covinv_patch, diff)
             grid = int(np.sqrt(num_real_patches))
             anomaly_map = patch_scores.reshape(grid, grid)
-            if not self.use_custom_min_max:
-                self.anomaly_max = np.percentile(self.good_patch_scores, 99) * 2 + np.std(self.good_patch_scores)
-                self.anomaly_min = np.percentile(self.good_patch_scores, 99)
 
+            # Normalizzazione (usando min/max correnti)
             anomaly_map_norm = np.clip(
                 (anomaly_map - self.anomaly_min) / (self.anomaly_max - self.anomaly_min + 1e-6), 0.0, 1.0
             )
-            anomaly_map_up = cv2.resize(
-                anomaly_map_norm,
-                (x.shape[3], x.shape[2]),
-                interpolation=cv2.INTER_LINEAR,
-            )
 
+            # Resize e Componenti connesse
+            anomaly_map_up = cv2.resize(anomaly_map_norm, (x.shape[3], x.shape[2]), interpolation=cv2.INTER_LINEAR)
             binary_mask_np = (anomaly_map_up > self.anomaly_threshold).astype(np.uint8)
             _, labels, stats, _ = cv2.connectedComponentsWithStats(binary_mask_np, 8)
 
-            total_area = 0
-            filtered_mask = np.zeros_like(binary_mask_np)
             for stat_idx, stat in enumerate(stats[1:], start=1):
-                _, _, w, h, _area = stat
-                # print("w*h: ", w * h)
-                if w * h >= self.area_threshold:
+                if stat[2] * stat[3] >= self.area_threshold:  # w * h
+                    total_area += stat[4]  # area effettiva
+                    if filtered_mask is None:
+                        filtered_mask = np.zeros_like(binary_mask_np)
                     filtered_mask[labels == stat_idx] = 1
-                    total_area += w * h
         else:
-            dist_cls = 0.0
-            total_area = 0.0
-            anomaly_map_norm = None
-            filtered_mask = None
-
-        # Dynamic threshold
-        if len(self.good_cls_distances) > 1:
-            if not self.warmup_done:
-                p99 = np.percentile(self.good_cls_distances, 99)
-                np.std(self.good_cls_distances)
-                if idx <= self.ramp_start:
-                    gamma = self.start_gamma
-                else:
-                    gamma = self.start_gamma + (1.0 - self.start_gamma) * (
-                        (idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
-                    )
-                # threshold = gamma * p99 + std_cls
-                threshold = gamma * p99
-                self.threshold = threshold
-            else:
-                threshold = self.threshold - 10
-                self.threshold = threshold
-        else:
-            threshold = np.inf
-
-        is_anomaly = self.warmup_done and dist_cls > threshold and total_area > self.global_area_threshold
-
-        # Update memory
-        if not is_anomaly and not self.warmup_done:
+            # Se la cache non è pronta vuol dire che siamo in warm up e bisogna popolare le matrici
             self.memory_cls_features.append(cls_token)
             self.memory_patch_features.append(patch_tokens)
-            self.good_cls_distances.append(dist_cls)
+            p_tokens_target = patch_tokens[-num_real_patches:]
 
-        if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
-            self.warmup_done = True
-            if not self._warmup_state_exists:
-                self._save_warmup(path="/workspace/src/SPA006/state_running.npz")
+            if len(self.memory_cls_features) >= 2:
+                # CLS
+                cls_stack = np.stack(self.memory_cls_features)
+                self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
+                # Patch
+                patch_stack = np.concatenate(self.memory_patch_features, axis=0)
+                self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
 
-        return {
+                dist_cls = mahalanobis_distance(cls_token[None, :], self.cached_mean_cls, self.cached_covinv_cls)[0]
+
+                diff = p_tokens_target - self.cached_mean_patch
+                patch_scores = np.einsum("nd,df,nf->n", diff, self.cached_covinv_patch, diff)
+
+                self.good_cls_distances.append(dist_cls)
+                self.good_patch_scores.extend(patch_scores)
+
+        is_anomaly = self.warmup_done and dist_cls > self.threshold and total_area > self.global_area_threshold
+
+        # --- FASE 2: PREPARAZIONE RISPOSTA ---
+        result = {
             "idx": idx,
             "is_anomaly": is_anomaly,
             "dist_cls": dist_cls,
@@ -402,23 +398,68 @@ class SlidingWindowAnomalyDetectorONNX:
             "binary_mask": filtered_mask,
         }
 
+        # --- FASE 3: AGGIORNAMENTO POST-RISPOSTA (Deferito) ---
+        # Lanciamo l'aggiornamento in background e usciamo subito col return
+        threading.Thread(
+            target=self._post_process_update,
+            args=(cls_token, p_tokens_target, dist_cls, is_anomaly, patch_scores),
+            daemon=True,
+        ).start()
+        # self._post_process_update(cls_token, p_tokens_target, dist_cls, is_anomaly, patch_scores)
+        return result
+
+    def _post_process_update(self, cls_token, patch_tokens, dist_cls, is_anomaly, patch_scores):
+        # 1. Aggiornamento Memoria (solo se non è anomalo e siamo in warmup)
+        if not is_anomaly:
+            self.memory_cls_features.append(cls_token)
+            self.memory_patch_features.append(patch_tokens)
+            self.good_cls_distances.append(dist_cls)
+            self.good_patch_scores.extend(patch_scores)
+
+        # 2. Ricalcolo Statistiche (Cache)
+        # Calcoliamo mean/covinv solo se abbiamo abbastanza campioni
+        if len(self.memory_cls_features) >= 2:
+            # CLS
+            cls_stack = np.stack(self.memory_cls_features)
+            self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
+
+            # Patch
+            patch_stack = np.concatenate(self.memory_patch_features, axis=0)
+            self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
+
+        # 3. Aggiornamento Dinamico Soglia (Threshold) + Ramping
+        if len(self.good_cls_distances) > 1 and self.warmup_done:
+            p99 = np.percentile(self.good_cls_distances, 99)
+            std = np.std(self.good_cls_distances)
+            if self.global_idx <= self.ramp_start:
+                gamma = self.start_gamma
+            else:
+                gamma = self.start_gamma + (1.0 - self.start_gamma) * (
+                    (self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
+                )
+
+            self.threshold = gamma * p99 + std / 3
+
+        if not self.use_custom_min_max and len(self.good_patch_scores) > self.inference_window_size:
+            p99_patch = np.percentile(self.good_patch_scores, 99)
+            self.anomaly_max = p99_patch * 2 + np.std(self.good_patch_scores)
+            self.anomaly_min = p99_patch
+
+        # 5. Check fine Warmup
+        if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
+            self.warmup_done = True
+            self._save_warmup(path="/workspace/src/SPA006/state_running.npz")
+
     # -------------------------------------------------
     # Sliding window loop
     # -------------------------------------------------
     def run(self, image: np.ndarray):
-        last_out = None
-
         out = self._process_single_image(image)
-        last_out = out
-
-        np.zeros(image.shape[:2], np.uint8)
 
         print(  # noqa: T201
-            f"Image {out['idx']} | "
-            f"dist={out['dist_cls']:.3f} | "
-            f"thresh cls {self.threshold} | "
-            f"anomaly={out['is_anomaly']} | "
-            f"warmup_done={self.warmup_done}"
+            f"Image {out['idx']} | dist={out['dist_cls']:.3f} | "
+            f"thresh={self.threshold} | anomaly={out['is_anomaly']} | "
+            f"warmup_done={self.warmup_done} | memory={len(self.memory_cls_features)}"
         )
 
         if out["is_anomaly"]:
@@ -430,10 +471,7 @@ class SlidingWindowAnomalyDetectorONNX:
             )
             return overlayed, mask, colored_map, True
 
-        overlayed = image.copy()
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         colored_map = np.zeros_like(image)
-        if last_out is None:
-            return overlayed, mask, colored_map, False
 
-        return overlayed, mask, colored_map, False
+        return image.copy(), mask, colored_map, False

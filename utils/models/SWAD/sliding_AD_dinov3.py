@@ -172,8 +172,7 @@ class SlidingWindowAnomalyDetector:
         for idx, img_path in enumerate(img_paths, start=1):
             img_pil = Image.open(img_path).convert("RGB")
 
-            img_np = np.array(img_pil)
-            img_np = img_np[780:1580, :, :]  # (H, W, C)
+            img_np = np.array(img_pil)  # (H, W, C)
             img_pil = Image.fromarray(img_np)
 
             x = self._preprocess(img_pil).to(self.device)

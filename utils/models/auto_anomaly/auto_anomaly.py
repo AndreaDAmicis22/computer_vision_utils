@@ -13,14 +13,14 @@ logger = logging.getLogger(__name__)
 class AutoAnomaly:
     def __init__(
         self,
-        onnx_model_path: str = "/home/aisent/Desktop/dev/utils/utils/models/auto_anomaly/assets/vit_large_dinov3_features.onnx",
-        warmup_window_size: int = 12,
-        inference_window_size: int = 12,
+        onnx_model_path: str = "/home/aisent/Desktop/dev/utils/utils/models/auto_anomaly/assets/vit_base_patch16_dinov3.lvd1689m_400.onnx",
+        warmup_window_size: int = 15,
+        inference_window_size: int = 30,
         area_threshold: int = 1200,
         global_area_threshold: int = 300,
         target_img_size: int = 512,
-        ramp_start: int = 32,
-        ramp_end: int = 100,
+        ramp_start: int = 10,
+        ramp_end: int = 40,
         anomaly_threshold: float = 0.6,
         use_custom_min_max: bool = False,
         anomaly_min: int = 100,
@@ -81,17 +81,26 @@ class AutoAnomaly:
     def _preprocess(self, image: np.ndarray, gamma=1.0):
         return self.gamma_correction(image, gamma)
 
-    def fit(self, images_path: str, save_path: str, make_sample: bool = False, n: int = 100):
+    def fit_sample(self, images_path: str, save_path: str, n: int = 100):
+        """
+        Performs warmup or training by sampling the images and saving the model state.
+
+        Args:
+            images_path (str | Path): Path to the directory containing the images.
+            save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.npz').
+            n (int): Number of images to sample when `make_sample` is set to True.
+        """
+        self.swad.fit_sample(images_path, save_path, n)
+
+    def fit_all(self, images_path: str, save_path: str):
         """
         Performs warmup or training by extracting features from images and saving the model state.
 
         Args:
             images_path (str | Path): Path to the directory containing the images.
             save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.npz').
-            make_sample (bool): If True, trains on a limited subset of images rather than the full dataset.
-            n (int): Number of images to sample when `make_sample` is set to True.
         """
-        self.swad.fit(images_path, save_path, make_sample, n)
+        self.swad.fit_all(images_path, save_path)
 
     def predict(self, image: np.ndarray):
         """
@@ -111,7 +120,6 @@ class AutoAnomaly:
             is_anomalous (bool): Boolean flag indicating if an anomaly was detected.
                                  Always False during the warmup phase.
         """
-        self.try_load_warmup("/home/aisent/Desktop/dev/SPA006")
         out_img, drawn_contours, colored_map, is_anomalous = self.swad.run(image)
         if self.warmup_counter < self.warmup_window_size:
             self.warmup_counter += 1
