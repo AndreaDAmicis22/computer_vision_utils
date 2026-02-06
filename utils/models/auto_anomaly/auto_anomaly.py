@@ -80,6 +80,21 @@ class AutoAnomaly:
             logger.info("State loaded")
             self.warmup_counter = self.warmup_window_size
 
+    def _file_exists(self, file_path: Path) -> bool:
+        """Verifica se il file specifico esiste ed è un file .npz"""
+        return bool(file_path.exists() and file_path.is_file() and file_path.suffix == ".npz")
+
+    def load_warmup_from_path(self, full_path: str):
+        """Carica lo stato da un percorso file completo"""
+        path = Path(full_path)
+
+        if self._file_exists(path):
+            self.swad.load_warmup(path)
+            logger.info(f"State loaded from {path}")
+            self.warmup_counter = self.warmup_window_size
+        else:
+            logger.error(f"File not found or invalid: {full_path}")
+
     def _preprocess(self, image: np.ndarray, gamma=1.0):
         return self.gamma_correction(image, gamma)
 
