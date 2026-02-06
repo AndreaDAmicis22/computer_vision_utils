@@ -35,7 +35,8 @@ dependencies = [
     "ultralytics",
     "Pillow",
     "PyYAML",
-    "requests"
+    "requests",
+    "onnxscript"
 ]
 
 # Optional dependencies

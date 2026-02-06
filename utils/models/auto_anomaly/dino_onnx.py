@@ -46,8 +46,8 @@ class SlidingWindowAnomalyDetectorONNX:
         onnx_model_path,
         warmup_window_size=15,
         inference_window_size=30,
-        ramp_start=16,
-        ramp_end=50,
+        ramp_start=10,
+        ramp_end=40,
         start_gamma=0.3,
         area_threshold=200,
         global_area_threshold=300,
@@ -69,6 +69,7 @@ class SlidingWindowAnomalyDetectorONNX:
         self.anomaly_max = anomaly_max
         self.anomaly_threshold = anomaly_threshold
         self.target_img_size = target_img_size
+        self.gamma = start_gamma
 
         # ONNX Runtime session
         devices = ov.Core().available_devices
@@ -119,6 +120,11 @@ class SlidingWindowAnomalyDetectorONNX:
         self.global_idx = 0
         self.warmup_done = False
         self._warmup_state_exists: bool = False
+
+        assert self.warmup_window_size <= self.inference_window_size, (
+            f"Errore di configurazione: warmup_window_size ({self.warmup_window_size}) "
+            f"non può essere maggiore di inference_window_size ({self.inference_window_size})"
+        )
 
     # -------------------------------------------------
     # Preprocessing
@@ -311,7 +317,7 @@ class SlidingWindowAnomalyDetectorONNX:
         if self.good_cls_distances:
             std_cls = np.std(self.good_cls_distances)
             p99 = np.percentile(self.good_cls_distances, 99)
-            self.threshold = 1.0 * p99 + std_cls
+            self.threshold = p99 + std_cls
 
             self._save_warmup(path=save_path)
             self.warmup_done = True
@@ -428,17 +434,20 @@ class SlidingWindowAnomalyDetectorONNX:
             self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
 
         # 3. Aggiornamento Dinamico Soglia (Threshold) + Ramping
-        if len(self.good_cls_distances) > 1 and self.warmup_done:
+        if len(self.good_cls_distances) > 1:
             p99 = np.percentile(self.good_cls_distances, 99)
             std = np.std(self.good_cls_distances)
             if self.global_idx <= self.ramp_start:
-                gamma = self.start_gamma
+                self.gamma = self.start_gamma
             else:
-                gamma = self.start_gamma + (1.0 - self.start_gamma) * (
-                    (self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
+                self.gamma = np.round(
+                    self.start_gamma
+                    + (1.0 - self.start_gamma)
+                    * ((self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start)),
+                    3,
                 )
 
-            self.threshold = gamma * p99 + std / 3
+            self.threshold = np.round(self.gamma * p99 + std, 3)
 
         if not self.use_custom_min_max and len(self.good_patch_scores) > self.inference_window_size:
             p99_patch = np.percentile(self.good_patch_scores, 99)
@@ -459,7 +468,8 @@ class SlidingWindowAnomalyDetectorONNX:
         print(  # noqa: T201
             f"Image {out['idx']} | dist={out['dist_cls']:.3f} | "
             f"thresh={self.threshold} | anomaly={out['is_anomaly']} | "
-            f"warmup_done={self.warmup_done} | memory={len(self.memory_cls_features)}"
+            f"warmup_done={self.warmup_done} | memory={len(self.memory_cls_features)} | "
+            f"gamma={self.gamma} | "
         )
 
         if out["is_anomaly"]:
