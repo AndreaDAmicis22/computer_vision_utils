@@ -1,7 +1,6 @@
 import logging
 import random
 import threading
-from collections import deque
 from pathlib import Path
 
 import cv2
@@ -60,6 +59,7 @@ class SlidingWindowAnomalyDetectorONNX:
         anomaly_max=1300.0,
         target_img_size=512,
         anomaly_threshold=0.6,
+        name_state="state",
     ):
         self.warmup_window_size = warmup_window_size
         self.inference_window_size = inference_window_size
@@ -74,6 +74,7 @@ class SlidingWindowAnomalyDetectorONNX:
         self.anomaly_threshold = anomaly_threshold
         self.target_img_size = target_img_size
         self.gamma = start_gamma
+        self.name_state = name_state
 
         # ONNX Runtime session
         devices = ov.Core().available_devices
@@ -111,10 +112,10 @@ class SlidingWindowAnomalyDetectorONNX:
 
         # Sliding window memory
         self.lock = threading.Lock()
-        self.memory_cls_features = deque(maxlen=inference_window_size)
-        self.memory_patch_features = deque(maxlen=inference_window_size)
-        self.good_cls_distances = deque(maxlen=inference_window_size)
-        self.good_patch_scores = deque(maxlen=inference_window_size)
+        self.memory_cls_features = []
+        self.memory_patch_features = []
+        self.good_cls_distances = []
+        self.good_patch_scores = []
 
         self.cached_mean_cls = None
         self.cached_covinv_cls = None
@@ -170,25 +171,11 @@ class SlidingWindowAnomalyDetectorONNX:
 
     def load_warmup(self, path):
         data = np.load(path)
+        self.memory_cls_features = data["memory_cls_features"]
+        self.memory_patch_features = [data["patch_stack"]]
+        self.good_cls_distances = data["good_cls_distances"]
+        self.good_patch_scores = data["good_patch_scores"]
 
-        self.memory_cls_features = deque(
-            data["memory_cls_features"],
-            maxlen=self.inference_window_size,
-        )
-
-        # Rebuild patch memory as a single element (works perfectly)
-        self.memory_patch_features = deque(
-            [data["patch_stack"]],
-            maxlen=self.inference_window_size,
-        )
-        self.good_cls_distances = deque(
-            data["good_cls_distances"],
-            maxlen=self.inference_window_size,
-        )
-        self.good_patch_scores = deque(
-            data["good_patch_scores"],
-            maxlen=self.inference_window_size,
-        )
         cls_stack = np.stack(list(self.memory_cls_features))
         self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
         patch_stack = self.memory_patch_features[0]
@@ -229,6 +216,8 @@ class SlidingWindowAnomalyDetectorONNX:
             anomaly_map_resized = anomaly_map_resized / 255.0
         cm = plt.get_cmap("inferno")
         colored_map = cm(anomaly_map_resized)
+        colored_map = (colored_map[:, :, :3] * 255).astype(np.uint8)
+        colored_map = cv2.cvtColor(colored_map, cv2.COLOR_RGB2BGR)
 
         # Create mask of regions above threshold
         mask = anomaly_map_resized > threshold
@@ -306,9 +295,9 @@ class SlidingWindowAnomalyDetectorONNX:
                     mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
                     num_real_patches = (self.target_img_size // 16) ** 2
                     patch_tokens = patch_tokens[-num_real_patches:]
-                    diff = patch_tokens - mean_patch
+                    diff = patch_tokens - mean_patch.unsqueeze(0)
                     patch_scores = np.einsum("nd,df,nf->n", diff, covinv_patch, diff)
-                    self.good_patch_scores.extend(patch_scores)
+                    self.good_patch_scores.append(patch_scores)
                 else:
                     dist_cls = 0.0
 
@@ -360,7 +349,7 @@ class SlidingWindowAnomalyDetectorONNX:
             # Inferenza classica
             # logger.info(f"Memory used! {idx}")
             # CLS
-            dist_cls = mahalanobis_distance(cls_token[None, :], m_cls, c_cls)[0]
+            dist_cls = mahalanobis_distance(cls_token[None, :], m_cls, c_cls).item()
 
             # Patch
             diff = p_tokens_target - m_patch
@@ -410,12 +399,12 @@ class SlidingWindowAnomalyDetectorONNX:
                     patch_scores = np.einsum("nd,df,nf->n", diff, self.cached_covinv_patch, diff)
 
                     self.good_cls_distances.append(dist_cls)
-                    self.good_patch_scores.extend(patch_scores)
+                    self.good_patch_scores.append(patch_scores)
 
                 # Check fine warmup interno al lock
                 if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
                     self.warmup_done = True
-                    self._save_warmup(path="/workspace/src/SPA006/new_states/state_running.npz")
+                    self._save_warmup(path=f"/workspace/src/SPA006/new_states/{self.name_state}_running.npz")
                 # logger.info(f"LEN: {len(self.memory_cls_features)}")
             is_anomaly = False
 
@@ -432,12 +421,18 @@ class SlidingWindowAnomalyDetectorONNX:
 
     def _post_process_update(self, cls_token, patch_tokens, dist_cls, is_anomaly, patch_scores):
         with self.lock:
-            # 1. Aggiornamento Memoria (solo se non è anomalo e siamo in warmup)
+            # 1. Aggiornamento Memoria
             if not is_anomaly:
+                if len(self.memory_cls_features) >= self.inference_window_size:
+                    self.memory_cls_features.pop(0)
+                    self.memory_patch_features.pop(0)
+                    self.good_cls_distances.pop(0)
+                    self.good_patch_scores.pop(0)
+
                 self.memory_cls_features.append(cls_token)
                 self.memory_patch_features.append(patch_tokens)
                 self.good_cls_distances.append(dist_cls)
-                self.good_patch_scores.extend(patch_scores)
+                self.good_patch_scores.append(patch_scores)
 
             # 2. Ricalcolo Statistiche (Cache)
             # Calcoliamo mean/covinv solo se abbiamo abbastanza campioni
@@ -452,7 +447,7 @@ class SlidingWindowAnomalyDetectorONNX:
 
             # 3. Aggiornamento Dinamico Soglia (Threshold) + Ramping
             if len(self.good_cls_distances) > 1:
-                p99 = np.percentile(self.good_cls_distances, 99)
+                p99 = np.percentile(self.good_cls_distances, 70)
                 std = np.std(self.good_cls_distances)
                 if self.global_idx <= self.ramp_start:
                     self.gamma = self.start_gamma

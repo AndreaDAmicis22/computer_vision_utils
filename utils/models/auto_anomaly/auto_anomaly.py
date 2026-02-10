@@ -26,6 +26,7 @@ class AutoAnomaly:
         use_custom_min_max: bool = False,
         anomaly_min: int = 100,
         anomaly_max: int = 1300,
+        name_state: str = "state",
     ):
         """
         Initializes the auto-anomaly detector based on Sliding Window and ONNX.
@@ -57,6 +58,7 @@ class AutoAnomaly:
             use_custom_min_max=use_custom_min_max,
             anomaly_min=anomaly_min,
             anomaly_max=anomaly_max,
+            name_state=name_state,
         )
         self.warmup_window_size = warmup_window_size
         self.area_threshold = area_threshold
