@@ -457,12 +457,10 @@ class SlidingWindowAnomalyDetectorONNX:
                 if self.global_idx <= self.ramp_start:
                     self.gamma = self.start_gamma
                 else:
-                    self.gamma = np.round(
-                        self.start_gamma
-                        + (1.0 - self.start_gamma)
-                        * ((self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start)),
-                        3,
+                    valore_calcolato = self.start_gamma + (1.0 - self.start_gamma) * (
+                        (self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start)
                     )
+                    self.gamma = np.round(np.clip(valore_calcolato, self.start_gamma, 1.0), 3)
 
                 self.threshold = np.round(self.gamma * p99 + std, 3)
 
