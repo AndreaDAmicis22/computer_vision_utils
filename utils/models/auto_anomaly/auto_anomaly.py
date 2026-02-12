@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from utils.models.auto_anomaly.dino_onnx import SlidingWindowAnomalyDetectorONNX
+from utils.models.auto_anomaly.dino_onnx_linear import SlidingWindowAnomalyDetectorONNX
 
 # from packages.redis_utils import redis_utils
 
