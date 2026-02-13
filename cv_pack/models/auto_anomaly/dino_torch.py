@@ -26,7 +26,7 @@ MODEL_SIZE_MAP = {
 
 
 # -------------------------------------------------
-# Sliding Window Anomaly Detector (ONNX)
+# Sliding Window Anomaly Detector (Torch)
 # -------------------------------------------------
 class SlidingWindowAnomalyDetector:
     def __init__(
@@ -136,7 +136,7 @@ class SlidingWindowAnomalyDetector:
         return transform(img_pil).unsqueeze(0)
 
     # -------------------------------------------------
-    # Feature extraction via ONNX
+    # Feature extraction
     # -------------------------------------------------
     def _save_warmup(self, path: Path):
         """
