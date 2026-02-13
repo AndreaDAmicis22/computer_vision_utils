@@ -67,7 +67,7 @@ class AutoAnomaly:
             path.mkdir()
             logger.info("State does not exist. Creating folder")
             return False, ""
-        files = list(path.glob("*.npz"))
+        files = list(path.glob("*.pt"))
         if len(files) > 0:
             return True, files[0]
         return False, ""
@@ -81,8 +81,8 @@ class AutoAnomaly:
             self.warmup_counter = self.warmup_window_size
 
     def _file_exists(self, file_path: Path) -> bool:
-        """Verifica se il file specifico esiste ed è un file .npz"""
-        return bool(file_path.exists() and file_path.is_file() and file_path.suffix == ".npz")
+        """Verifica se il file specifico esiste ed è un file .pt"""
+        return bool(file_path.exists() and file_path.is_file() and file_path.suffix == ".pt")
 
     def load_warmup_from_path(self, full_path: str):
         """Carica lo stato da un percorso file completo"""
@@ -104,7 +104,7 @@ class AutoAnomaly:
 
         Args:
             images_path (str | Path): Path to the directory containing the images.
-            save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.npz').
+            save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.pt').
             n (int): Number of images to sample when `make_sample` is set to True.
         """
         self.swad.fit_sample(images_path, save_path, n)
@@ -115,7 +115,7 @@ class AutoAnomaly:
 
         Args:
             images_path (str | Path): Path to the directory containing the images.
-            save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.npz').
+            save_path (str | Path): Path to the file where the state will be saved (e.g., '/path/to/state.pt').
         """
         self.swad.fit_all(images_path, save_path)
 

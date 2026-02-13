@@ -26,26 +26,6 @@ MODEL_SIZE_MAP = {
 
 
 # -------------------------------------------------
-# Math utilities (Torch)
-# -------------------------------------------------
-def compute_mean_cov_inv(features: torch.Tensor | np.ndarray, eps: float = 1e-2) -> tuple[torch.Tensor, torch.Tensor]:
-    features = torch.tensor(features, dtype=torch.float32)
-    mean = torch.mean(features, dim=0)
-    diffs = features - mean
-    cov = torch.matmul(diffs.T, diffs) / (features.shape[0] - 1)
-    cov += eps * torch.eye(cov.shape[0])
-    cov_inv = torch.linalg.inv(cov)
-    return mean, cov_inv
-
-
-def mahalanobis_distance(vec: torch.Tensor, mean: torch.Tensor, cov_inv: torch.Tensor) -> torch.Tensor:
-    diff = vec - mean
-    left = torch.matmul(diff, cov_inv)
-    d_sq = torch.sum(left * diff, dim=1)
-    return torch.sqrt(d_sq)
-
-
-# -------------------------------------------------
 # Sliding Window Anomaly Detector (ONNX)
 # -------------------------------------------------
 class SlidingWindowAnomalyDetector:
@@ -99,6 +79,7 @@ class SlidingWindowAnomalyDetector:
         self._warmup_state_exists: bool = False
 
         self.border = 80
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.extractor = self._build_extractor()
 
         assert self.warmup_window_size <= self.inference_window_size, (
@@ -112,7 +93,7 @@ class SlidingWindowAnomalyDetector:
     def _build_extractor(self) -> torch.nn.Module:
         model = timm.create_model(MODEL_SIZE_MAP[self.model_size], pretrained=True)
         model.eval()
-        return model
+        return model.to(self.device)
 
     def _extract_features(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         with torch.no_grad():
@@ -120,6 +101,26 @@ class SlidingWindowAnomalyDetector:
             patch_tokens = features[:, 1:, :]  # without CLS
             cls_token = features[:, 0, :]
         return patch_tokens, cls_token
+
+    # -------------------------------------------------
+    # Math utilities (Torch)
+    # -------------------------------------------------
+    def compute_mean_cov_inv(
+        self, features: torch.Tensor | np.ndarray, eps: float = 1e-2
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        features = torch.tensor(features, dtype=torch.float32, device=self.device)
+        mean = torch.mean(features, dim=0)
+        diffs = features - mean
+        cov = torch.matmul(diffs.T, diffs) / (features.shape[0] - 1)
+        cov += eps * torch.eye(cov.shape[0], device=self.device)
+        cov_inv = torch.linalg.inv(cov)
+        return mean, cov_inv
+
+    def mahalanobis_distance(self, vec: torch.Tensor, mean: torch.Tensor, cov_inv: torch.Tensor) -> torch.Tensor:
+        diff = vec - mean
+        left = torch.matmul(diff, cov_inv)
+        d_sq = torch.sum(left * diff, dim=1)
+        return torch.sqrt(d_sq)
 
     # -------------------------------------------------
     # Preprocessing
@@ -138,35 +139,54 @@ class SlidingWindowAnomalyDetector:
     # Feature extraction via ONNX
     # -------------------------------------------------
     def _save_warmup(self, path: Path):
-        # disc_id = redis_utils.get_key_val("codice_prodotto", "int")
-        # path = Path("/workspace/src/SPA006/state.npz")
-        patch_stack = np.concatenate(self.memory_patch_features, axis=0)
+        """
+        Salva lo stato del modello (feature e soglie) in formato PyTorch .pt
+        """
+        # Assicuriamoci che tutto sia in un formato salvabile (lista di tensor o tensor unico)
+        state = {
+            "memory_cls_features": self.memory_cls_features,  # Lista di tensor
+            "memory_patch_features": self.memory_patch_features,  # Lista di tensor
+            "good_cls_distances": torch.tensor(self.good_cls_distances),
+            "good_patch_scores": self.good_patch_scores,  # Lista di tensor
+            "threshold": self.threshold,
+            "warmup_done": True,
+        }
+        try:
+            torch.save(state, path)
+            logger.info(f"Stato del warmup salvato correttamente in: {path}")
+        except Exception as e:
+            logger.exception(f"Errore durante il salvataggio dello stato: {e}")
 
-        np.savez_compressed(
-            path,
-            memory_cls_features=np.stack(self.memory_cls_features),
-            patch_stack=patch_stack,
-            good_cls_distances=np.array(self.good_cls_distances),
-            good_patch_scores=np.array(self.good_patch_scores),
-            threshold=self.threshold,
-        )
-        logger.info(f"Salvato stato in: {path}")
+    def load_warmup(self, path: str):
+        """
+        Carica lo stato del warmup e inizializza le matrici per l'inferenza rapida.
+        """
+        # Carica tutto forzando il device definito nella tua __init__
+        state = torch.load(path, map_location=self.device, weights_only=False)
 
-    def load_warmup(self, path):
-        data = np.load(path)
-        self.memory_cls_features = data["memory_cls_features"]
-        self.memory_patch_features = [data["patch_stack"]]
-        self.good_cls_distances = data["good_cls_distances"]
-        self.good_patch_scores = data["good_patch_scores"]
-        cls_stack = np.stack(list(self.memory_cls_features))
-        self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
-        patch_stack = self.memory_patch_features[0]
-        self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
+        # Ripristina le liste spostando esplicitamente ogni elemento
+        self.memory_cls_features = [f.to(self.device) for f in state["memory_cls_features"]]
+        self.memory_patch_features = [f.to(self.device) for f in state["memory_patch_features"]]
+        self.good_cls_distances = state["good_cls_distances"].tolist()
+        self.good_patch_scores = [s.to(self.device) for s in state["good_patch_scores"]]
+        self.threshold = float(state["threshold"])
 
-        self.threshold = float(data["threshold"])
+        # Ricalcolo delle matrici direttamente sul device corretto
+        cls_stack = torch.stack(self.memory_cls_features).to(self.device)
+        patch_stack = torch.cat(self.memory_patch_features, dim=0).to(self.device)
+
+        # Calcolo medie e inverse
+        self.cached_mean_cls, self.cached_covinv_cls = self.compute_mean_cov_inv(cls_stack)
+        self.cached_mean_patch, self.cached_covinv_patch = self.compute_mean_cov_inv(patch_stack)
+
+        # Un ultimo controllo di sicurezza: forziamo il device sulle variabili cached
+        self.cached_mean_cls = self.cached_mean_cls.to(self.device)
+        self.cached_covinv_cls = self.cached_covinv_cls.to(self.device)
+        self.cached_mean_patch = self.cached_mean_patch.to(self.device)
+        self.cached_covinv_patch = self.cached_covinv_patch.to(self.device)
+
         self.warmup_done = True
-        self._warmup_state_exists = True
-        logger.info(f"Caricato stato da: {path}")
+        logger.info(f"Modello caricato sul device: {self.device}")
 
     def _create_anomaly_image_threshold(
         self,
@@ -276,17 +296,17 @@ class SlidingWindowAnomalyDetector:
                 image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                 image_pil = Image.fromarray(image_rgb)
 
-                x = self._preprocess(image_pil)
+                x = self._preprocess(image_pil).to(self.device)
                 patch_tokens, cls_token = self._extract_features(x)
 
                 if len(self.memory_cls_features) >= 2:
                     cls_stack = torch.stack(self.memory_cls_features)
-                    mean_cls, covinv_cls = compute_mean_cov_inv(cls_stack)
-                    dist_cls = mahalanobis_distance(cls_token, mean_cls, covinv_cls).item()
+                    mean_cls, covinv_cls = self.compute_mean_cov_inv(cls_stack)
+                    dist_cls = self.mahalanobis_distance(cls_token, mean_cls, covinv_cls).item()
 
                     patch_stack = torch.cat(self.memory_patch_features, dim=0)
 
-                    mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
+                    mean_patch, covinv_patch = self.compute_mean_cov_inv(patch_stack)
                     num_real_patches = (self.target_img_size // 16) ** 2
                     patch_tokens = patch_tokens[-num_real_patches:]
                     diff = patch_tokens - mean_patch
@@ -325,7 +345,7 @@ class SlidingWindowAnomalyDetector:
 
         # convert directly to RGB tensor
         if isinstance(image, Image.Image):
-            x = self._preprocess(image)
+            x = self._preprocess(image).to(self.device)
         elif isinstance(image, np.ndarray):
             if image.ndim == 2:  # grayscale
                 image = np.stack([image] * 3, axis=-1)
@@ -333,7 +353,7 @@ class SlidingWindowAnomalyDetector:
                 image = np.concatenate([image] * 3, axis=-1)
             elif image.shape[-1] == 3:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            x = self._preprocess(Image.fromarray(image.astype(np.uint8)))
+            x = self._preprocess(Image.fromarray(image.astype(np.uint8))).to(self.device)
         elif isinstance(image, torch.Tensor):
             x = image if image.ndim == 4 else image.unsqueeze(0)
         else:
@@ -357,7 +377,7 @@ class SlidingWindowAnomalyDetector:
         # 2. Logica di Inferenza (se il modello è pronto)
         if self.warmup_done and self.cached_mean_cls is not None:
             # Calcolo Distanze (CLS & Patch)
-            dist_cls = mahalanobis_distance(cls_token, self.cached_mean_cls, self.cached_covinv_cls).item()
+            dist_cls = self.mahalanobis_distance(cls_token, self.cached_mean_cls, self.cached_covinv_cls).item()
             diff = p_tokens_target - self.cached_mean_patch.unsqueeze(0)
             patch_scores = torch.einsum("nd,df,nf->n", diff, self.cached_covinv_patch, diff)
 
@@ -406,13 +426,13 @@ class SlidingWindowAnomalyDetector:
             if len(self.memory_cls_features) >= 2:
                 # Update Cache Statistiche
                 cls_stack = torch.stack(self.memory_cls_features)
-                self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
+                self.cached_mean_cls, self.cached_covinv_cls = self.compute_mean_cov_inv(cls_stack)
                 patch_stack = torch.cat(self.memory_patch_features, dim=0)
-                self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
+                self.cached_mean_patch, self.cached_covinv_patch = self.compute_mean_cov_inv(patch_stack)
 
                 # Se non eravamo in inferenza, calcoliamo distanze per lo storico soglia
                 if not self.warmup_done:
-                    dist_cls = mahalanobis_distance(cls_token, self.cached_mean_cls, self.cached_covinv_cls).item()
+                    dist_cls = self.mahalanobis_distance(cls_token, self.cached_mean_cls, self.cached_covinv_cls).item()
                     patch_scores = torch.einsum(
                         "nd,df,nf->n",
                         p_tokens_target - self.cached_mean_patch,
@@ -442,7 +462,7 @@ class SlidingWindowAnomalyDetector:
         # 4. Gestione Fine Warmup
         if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
             self.warmup_done = True
-            self._save_warmup(path=f"/workspace/src/SPA006/new_states/{self.name_state}_running.npz")
+            self._save_warmup(path=f"/workspace/src/SPA006/new_states/{self.name_state}_running.pt")
 
         return {
             "idx": idx,
