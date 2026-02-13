@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from utils.models.auto_anomaly.dino_torch import SlidingWindowAnomalyDetector
+from cv_pack.models.auto_anomaly.dino_torch import SlidingWindowAnomalyDetector
 
 logger = logging.getLogger(__name__)
 

@@ -2,9 +2,9 @@ import os
 
 import cv2
 import numpy as np
+from cv_pack.models.YOLO_CLS.yolo import YOLO_CLS_ONNX
 from sklearn.metrics import classification_report, confusion_matrix
 from tqdm import tqdm
-from utils.models.YOLO_CLS.yolo import YOLO_CLS_ONNX
 
 
 def load_dataset(root):
