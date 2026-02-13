@@ -1,2 +1,4 @@
 from .auto_anomaly import AutoAnomaly
 from .dino_onnx import SlidingWindowAnomalyDetectorONNX
+from .dino_onnx_linear import SlidingWindowAnomalyDetectorONNX
+from .dino_torch import SlidingWindowAnomalyDetector
