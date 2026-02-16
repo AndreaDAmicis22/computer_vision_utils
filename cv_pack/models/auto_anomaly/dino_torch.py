@@ -244,6 +244,22 @@ class SlidingWindowAnomalyDetector:
         # Blend overlay with original image
         alpha = 0.25
         overlayed = cv2.addWeighted(overlay, alpha, img_np, 1 - alpha, 0)
+
+        text = "anomaly"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1  # Scritta piccola
+        thickness = 1
+        text_color = (255, 255, 255)  # Bianco (BGR)
+
+        # Calcola le dimensioni del testo per centrarlo
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+
+        # Posizione: Metà larghezza - metà testo, altezza fissa (es. 30px dal bordo superiore)
+        text_x = (overlayed.shape[1] - text_width) // 2
+        text_y = text_height + 10
+
+        cv2.putText(overlayed, text, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
+
         return overlayed, mask, colored_map
 
     # -------------------------------------------------
@@ -327,7 +343,7 @@ class SlidingWindowAnomalyDetector:
         # --- Calcolo soglie e salvataggio ---
         if self.good_cls_distances:
             # std_cls = np.std(self.good_cls_distances)
-            p99 = np.percentile(self.good_cls_distances, 95)
+            p99 = np.percentile(self.good_cls_distances, 75)
             # self.threshold = p99 + std_cls
             self.threshold = p99
 
@@ -411,7 +427,7 @@ class SlidingWindowAnomalyDetector:
                     filtered_mask[labels == s_idx] = 1
 
             # Decisione Finale
-            is_anomaly = self.warmup_done and dist_cls > self.threshold and total_area > self.global_area_threshold
+            is_anomaly = (self.warmup_done and dist_cls > self.threshold) or total_area > self.global_area_threshold
 
         # 3. Aggiornamento Memoria e Statistiche (Background logic logicamente sequenziale)
         if not is_anomaly:
