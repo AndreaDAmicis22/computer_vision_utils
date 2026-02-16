@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class AutoAnomaly:
     def __init__(
         self,
-        onnx_model_path: str = "/home/aisent/Desktop/dev/utils/utils/models/auto_anomaly/assets/vit_base_patch16_dinov3.lvd1689m_400.onnx",
+        onnx_model_path: str = "/workspace/src/custom_packs/cv_pack/models/auto_anomaly/assets/vit_base_patch16_dinov3.lvd1689m_464.onnx",
         warmup_window_size: int = 15,
         inference_window_size: int = 30,
         area_threshold: int = 1200,

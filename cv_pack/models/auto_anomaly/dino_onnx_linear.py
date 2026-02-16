@@ -310,6 +310,7 @@ class SlidingWindowAnomalyDetectorONNX:
 
                 x = self._preprocess(image_rgb)
                 patch_tokens, cls_token = self._extract_features(x)
+                num_real_patches = (self.target_img_size // 16) ** 2
 
                 if len(self.memory_cls_features) >= 2:
                     cls_stack = np.stack(self.memory_cls_features)
@@ -318,17 +319,17 @@ class SlidingWindowAnomalyDetectorONNX:
 
                     patch_stack = np.concatenate(self.memory_patch_features, axis=0)
                     mean_patch, covinv_patch = compute_mean_cov_inv(patch_stack)
-                    num_real_patches = (self.target_img_size // 16) ** 2
                     patch_tokens = patch_tokens[-num_real_patches:]
                     diff = patch_tokens - mean_patch
                     patch_scores = np.einsum("nd,df,nf->n", diff, covinv_patch, diff)
-                    self.good_patch_scores.append(patch_scores)
                 else:
                     dist_cls = 0.0
+                    patch_scores = np.zeros(num_real_patches, dtype=np.float32)
 
                 self.memory_cls_features.append(cls_token)
                 self.memory_patch_features.append(patch_tokens)
                 self.good_cls_distances.append(dist_cls)
+                self.good_patch_scores.append(patch_scores)
 
             except Exception as e:
                 logger.info(f"Errore durante l'elaborazione di {img_path}: {e}")

@@ -167,8 +167,8 @@ class SlidingWindowAnomalyDetector:
         # Ripristina le liste spostando esplicitamente ogni elemento
         self.memory_cls_features = [f.to(self.device) for f in state["memory_cls_features"]]
         self.memory_patch_features = [f.to(self.device) for f in state["memory_patch_features"]]
-        self.good_cls_distances = state["good_cls_distances"].tolist()
-        self.good_patch_scores = [s.to(self.device) for s in state["good_patch_scores"]]
+        self.good_cls_distances = state["good_cls_distances"]
+        self.good_patch_scores = list(state["good_patch_scores"])
         self.threshold = float(state["threshold"])
 
         # Ricalcolo delle matrici direttamente sul device corretto
@@ -281,16 +281,12 @@ class SlidingWindowAnomalyDetector:
         return files
 
     def _fit(self, image_files: list, save_path: str):
-        """
-        Metodo core che esegue il training effettivo su una lista di file.
-        """
         save_path = Path(save_path)
 
         for img_path in tqdm(image_files, desc="Training"):
             try:
                 image_bgr = cv2.imread(str(img_path))
                 if image_bgr is None:
-                    logger.info(f"Impossibile leggere: {img_path}")
                     continue
 
                 image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -298,29 +294,35 @@ class SlidingWindowAnomalyDetector:
 
                 x = self._preprocess(image_pil).to(self.device)
                 patch_tokens, cls_token = self._extract_features(x)
+                patch_tokens = patch_tokens.squeeze(0)  # (N, D)
+                num_real_patches = (self.target_img_size // 16) ** 2
+                p_tokens_target = patch_tokens[-num_real_patches:]
 
+                # Calcoliamo le distanze solo se abbiamo almeno 2 campioni
                 if len(self.memory_cls_features) >= 2:
                     cls_stack = torch.stack(self.memory_cls_features)
                     mean_cls, covinv_cls = self.compute_mean_cov_inv(cls_stack)
                     dist_cls = self.mahalanobis_distance(cls_token, mean_cls, covinv_cls).item()
 
                     patch_stack = torch.cat(self.memory_patch_features, dim=0)
-
                     mean_patch, covinv_patch = self.compute_mean_cov_inv(patch_stack)
-                    num_real_patches = (self.target_img_size // 16) ** 2
-                    patch_tokens = patch_tokens[-num_real_patches:]
-                    diff = patch_tokens - mean_patch
-                    patch_scores = torch.einsum("nd,df,nf->n", diff, covinv_patch, diff)
-                    self.good_patch_scores.append(patch_scores)
+                    patch_scores = torch.einsum(
+                        "nd,df,nf->n",
+                        p_tokens_target - mean_patch,
+                        covinv_patch,
+                        p_tokens_target - mean_patch,
+                    )
                 else:
                     dist_cls = 0.0
+                    patch_scores = np.zeros(num_real_patches, dtype=np.float32)
 
-                self.memory_cls_features.append(cls_token)
-                self.memory_patch_features.append(patch_tokens)
+                self.memory_cls_features.append(cls_token.squeeze(0))
+                self.memory_patch_features.append(p_tokens_target.squeeze(0))
                 self.good_cls_distances.append(dist_cls)
+                self.good_patch_scores.append(patch_scores)
 
             except Exception as e:
-                logger.info(f"Errore durante l'elaborazione di {img_path}: {e}")
+                logger.exception(f"Errore su {img_path}: {e}")
                 continue
 
         # --- Calcolo soglie e salvataggio ---
