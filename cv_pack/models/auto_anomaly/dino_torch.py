@@ -142,12 +142,11 @@ class SlidingWindowAnomalyDetector:
         """
         Salva lo stato del modello (feature e soglie) in formato PyTorch .pt
         """
-        # Assicuriamoci che tutto sia in un formato salvabile (lista di tensor o tensor unico)
         state = {
-            "memory_cls_features": self.memory_cls_features,  # Lista di tensor
-            "memory_patch_features": self.memory_patch_features,  # Lista di tensor
-            "good_cls_distances": torch.tensor(self.good_cls_distances),
-            "good_patch_scores": self.good_patch_scores,  # Lista di tensor
+            "memory_cls_features": self.memory_cls_features,
+            "memory_patch_features": self.memory_patch_features,
+            "good_cls_distances": self.good_cls_distances,
+            "good_patch_scores": self.good_patch_scores,
             "threshold": self.threshold,
             "warmup_done": True,
         }
@@ -167,7 +166,7 @@ class SlidingWindowAnomalyDetector:
         # Ripristina le liste spostando esplicitamente ogni elemento
         self.memory_cls_features = [f.to(self.device) for f in state["memory_cls_features"]]
         self.memory_patch_features = [f.to(self.device) for f in state["memory_patch_features"]]
-        self.good_cls_distances = state["good_cls_distances"]
+        self.good_cls_distances = list(state["good_cls_distances"])
         self.good_patch_scores = list(state["good_patch_scores"])
         self.threshold = float(state["threshold"])
 
