@@ -75,17 +75,6 @@ model = models.mobilenet_v3_small(weights=weights)
 # Recupera il numero di feature in ingresso all'ultimo classificatore
 in_features = model.classifier[0].in_features
 
-# model.classifier = nn.Sequential(
-#     nn.Dropout(p=0.3),
-#     nn.Linear(in_features, 512),  # 1° FC
-#     nn.ReLU(),
-#     nn.Dropout(p=0.2),
-#     nn.Linear(512, 256),  # 2° FC
-#     nn.ReLU(),
-#     nn.Dropout(p=0.2),
-#     nn.Linear(256, NUM_CLASSES),  # 3° FC → logits
-# )
-
 model.classifier = nn.Sequential(
     nn.Dropout(p=0.4),
     nn.Linear(in_features, 512),  # 1° FC
