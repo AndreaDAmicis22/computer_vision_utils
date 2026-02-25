@@ -303,20 +303,13 @@ class SlidingWindowAnomalyDetectorONNX:
 
         # 3. Aggiornamento Memoria e Statistiche (Background logic logicamente sequenziale)
         else:
-            # start_total = time.perf_counter()
             self.memory_cls_features.append(cls_token)
             self.memory_patch_features.append(p_tokens_target)
-            # Se siamo in warmup, le distanze vengono calcolate solo se abbiamo almeno 2 campioni
             if len(self.memory_cls_features) >= 2:
-                # Update Cache Statistiche
                 cls_stack = np.stack(self.memory_cls_features)
-                # t0 = time.perf_counter()
                 self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
-                # logger.info(f"Tempo compute_mean_cov_inv(cls): {time.perf_counter() - t0:.4f}s")
                 patch_stack = np.concatenate(self.memory_patch_features, axis=0)
-                # t0 = time.perf_counter()
                 self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
-                # logger.info(f"Tempo compute_mean_cov_inv(patch): {time.perf_counter() - t0:.4f}s")
                 dist_cls = mahalanobis_distance(cls_token[None, :], self.cached_mean_cls, self.cached_covinv_cls)[0]
                 patch_scores = np.einsum(
                     "nd,df,nf->n",
@@ -326,7 +319,6 @@ class SlidingWindowAnomalyDetectorONNX:
                 )
                 self.good_cls_distances.append(dist_cls)
                 self.good_patch_scores.append(patch_scores)
-            # logger.info(f"Tempo totale aggiornamento cache: {time.perf_counter() - start_total:.4f}s")
 
             # Update Dinamico Soglia & Ramping
             if len(self.good_cls_distances) > 1:
