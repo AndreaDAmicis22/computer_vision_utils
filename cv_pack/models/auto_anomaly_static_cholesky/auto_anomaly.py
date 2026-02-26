@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from cv_pack.models.auto_anomaly_static.dino_onnx import AnomalyDetectorONNX
+from cv_pack.models.auto_anomaly_static_cholesky.dino_onnx import AnomalyDetectorONNX
 
 # from packages.redis_utils import redis_utils
 

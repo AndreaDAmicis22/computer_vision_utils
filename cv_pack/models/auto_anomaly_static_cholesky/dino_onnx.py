@@ -19,25 +19,48 @@ logger = logging.getLogger("AnomalyDetector")
 # -------------------------------------------------
 # Math utilities (NumPy)
 # -------------------------------------------------
-def compute_mean_cov_inv(features, eps=1e-2):
-    """
-    features: (N, D)
-    """
-    mean = np.mean(features, axis=0)
+# def predict_cholesky(cls_token: np.ndarray, cls_stack: np.ndarray):
+#     mean, L = cholesky(cls_stack)
+#     diff = cls_token - mean  # (1, D) or (N, D)
+#     y = np.linalg.solve(L, diff.T)  # solve L y = diff
+#     d_sq = np.sum(y * y, axis=0)
+#     return np.sqrt(d_sq)[0]
+
+
+# def predict_cholesky_patches(p_tokens: np.ndarray, patch_stack: np.ndarray):
+#     """
+#     p_tokens:    (N, D)
+#     patch_stack: (M, D)
+#     """
+#     mean, L = cholesky(patch_stack)
+#     diff = p_tokens - mean  # (N, D)
+#     y = np.linalg.solve(L, diff.T)  # Solve L y = diff^T (D, N)
+#     d_sq = np.sum(y * y, axis=0)  # (N,)
+#     # return d_sq
+#     return np.sqrt(d_sq)
+
+
+def cholesky(features, eps=1e-2):
+    features = np.asarray(features, dtype=np.float32)
+    mean = features.mean(axis=0)
     diffs = features - mean
-    cov = diffs.T @ diffs / (features.shape[0] - 1)
-    cov += eps * np.eye(cov.shape[0], dtype=np.float32)
-    cov_inv = np.linalg.inv(cov)
-    return mean, cov_inv
+    cov = diffs.T @ diffs
+    cov /= features.shape[0] - 1
+    cov.flat[:: cov.shape[0] + 1] += eps
+    L = np.linalg.cholesky(cov)
+    return mean, L
 
 
-def mahalanobis_distance(vec, mean, cov_inv):
+def mahalanobis_cholesky(diff, L):
     """
-    vec: (N, D)
+    Computes distance using the Cholesky factor L.
+    diff: (N, D) - centered features
+    L: (D, D) - Lower triangular matrix from cholesky(cov)
     """
-    diff = vec - mean
-    d_sq = np.sum((diff @ cov_inv) * diff, axis=1)
-    return np.sqrt(d_sq)
+    # Solve L*y = diff.T -> y is (D, N)
+    # Using solve_triangular is faster than general np.linalg.solve
+    y = np.linalg.solve(L, diff.T)
+    return np.sum(y**2, axis=0)
 
 
 # -------------------------------------------------
@@ -85,16 +108,16 @@ class AnomalyDetectorONNX:
             self.output_names = [o.name for o in self.session.get_outputs()]
             assert len(self.output_names) == 2, "ONNX model must output (cls, patches)"
 
-        # Memory
+        # Sliding window memory
         self.memory_cls_features = deque(maxlen=warmup_window_size)
         self.memory_patch_features = deque(maxlen=warmup_window_size)
         self.good_cls_distances = deque(maxlen=warmup_window_size)
         self.good_patch_scores = deque(maxlen=warmup_window_size)
 
         self.cached_mean_cls = None
-        self.cached_covinv_cls = None
+        self.cached_L_cls = None
         self.cached_mean_patch = None
-        self.cached_covinv_patch = None
+        self.cached_L_patch = None
 
         self.threshold = 0
         self.global_idx = 0
@@ -164,9 +187,9 @@ class AnomalyDetectorONNX:
             maxlen=self.warmup_window_size,
         )
         cls_stack = np.stack(list(self.memory_cls_features))
-        self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
+        self.cached_mean_cls, self.cached_L_cls = cholesky(cls_stack)
         patch_stack = self.memory_patch_features[0]
-        self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
+        self.cached_mean_patch, self.cached_L_patch = cholesky(patch_stack)
 
         self.threshold = float(data["threshold"])
         self.warmup_done = True
@@ -255,10 +278,13 @@ class AnomalyDetectorONNX:
 
         # --- CASE A: INFERENCE MODE (Warmup Done) ---
         if self.warmup_done and self.cached_mean_cls is not None:
-            # CLS Distance and Patch Scores
-            dist_cls = mahalanobis_distance(cls_token[None, :], self.cached_mean_cls, self.cached_covinv_cls)[0]
-            diff = p_tokens_target - self.cached_mean_patch
-            patch_scores = np.einsum("nd,df,nf->n", diff, self.cached_covinv_patch, diff)
+            # CLS Distance
+            diff_cls = (cls_token - self.cached_mean_cls).reshape(1, -1)
+            dist_cls = np.sqrt(mahalanobis_cholesky(diff_cls, self.cached_L_cls))[0]
+
+            # Patch Scores
+            diff_patch = p_tokens_target - self.cached_mean_patch
+            patch_scores = mahalanobis_cholesky(diff_patch, self.cached_L_patch)
 
             # Anomaly Map Generation
             grid = int(np.sqrt(num_real_patches))
@@ -296,24 +322,27 @@ class AnomalyDetectorONNX:
             self.memory_cls_features.append(cls_token)
             self.memory_patch_features.append(p_tokens_target)
             if len(self.memory_cls_features) >= 2:
+                # Update CLS stats
                 cls_stack = np.stack(self.memory_cls_features)
-                self.cached_mean_cls, self.cached_covinv_cls = compute_mean_cov_inv(cls_stack)
-                patch_stack = np.concatenate(self.memory_patch_features, axis=0)
-                self.cached_mean_patch, self.cached_covinv_patch = compute_mean_cov_inv(patch_stack)
-                dist_cls = mahalanobis_distance(cls_token[None, :], self.cached_mean_cls, self.cached_covinv_cls)[0]
-                patch_scores = np.einsum(
-                    "nd,df,nf->n",
-                    p_tokens_target - self.cached_mean_patch,
-                    self.cached_covinv_patch,
-                    p_tokens_target - self.cached_mean_patch,
-                )
+                self.cached_mean_cls, self.cached_L_cls = cholesky(cls_stack)
+
+                # Calculate current distance for the threshold buffer
+                diff_cls = (cls_token - self.cached_mean_cls).reshape(1, -1)
+                dist_cls = np.sqrt(mahalanobis_cholesky(diff_cls, self.cached_L_cls))[0]
                 self.good_cls_distances.append(dist_cls)
+
+                # Update Patch stats
+                patch_stack = np.concatenate(self.memory_patch_features, axis=0)
+                self.cached_mean_patch, self.cached_L_patch = cholesky(patch_stack)
+
+                diff_patch = p_tokens_target - self.cached_mean_patch
+                patch_scores = mahalanobis_cholesky(diff_patch, self.cached_L_patch)
                 self.good_patch_scores.append(patch_scores)
 
             # Dynamic Threshold Update
             if len(self.good_cls_distances) > 20:
                 p99 = np.percentile(self.good_cls_distances, 99)
-                self.threshold = np.round(p99, 3) + np.std(self.good_cls_distances)
+                self.threshold = np.round(p99 + np.std(self.good_cls_distances) * 2, 3)
 
         # --- CASE C: TRANSITION (Finish Warmup) ---
         if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
