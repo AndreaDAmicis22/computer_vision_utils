@@ -47,16 +47,6 @@ class AutoAnomaly:
         self.warmup_counter = 0
 
     def _state_exists(self, path: Path):
-        if not path.exists():
-            path.mkdir()
-            logger.info("State does not exist. Creating folder")
-            return False, ""
-        files = list(path.glob(f"{self.camera_name}.npz"))
-        if len(files) > 0:
-            return True, files[0]
-        return False, ""
-
-    def _state_exists(self, path: Path):
         try:
             if not path.exists():
                 path.mkdir(exist_ok=True)
@@ -75,7 +65,7 @@ class AutoAnomaly:
         return False, ""
 
     def try_load_warmup(self):
-        path = Path(f"/workspace/src/SPA006/dino_states/{self.camera_name}")
+        path = Path(f"/workspace/src/SPA006/dino_states_chol/{self.camera_name}")
         exists, state_path = self._state_exists(path)
         if exists:
             self.swad.load_warmup(state_path)

@@ -108,7 +108,7 @@ class AnomalyDetectorONNX:
             self.output_names = [o.name for o in self.session.get_outputs()]
             assert len(self.output_names) == 2, "ONNX model must output (cls, patches)"
 
-        # Sliding window memory
+        # Memory
         self.memory_cls_features = deque(maxlen=warmup_window_size)
         self.memory_patch_features = deque(maxlen=warmup_window_size)
         self.good_cls_distances = deque(maxlen=warmup_window_size)
@@ -167,13 +167,10 @@ class AnomalyDetectorONNX:
 
     def load_warmup(self, path):
         data = np.load(path)
-
         self.memory_cls_features = deque(
             data["memory_cls_features"],
             maxlen=self.warmup_window_size,
         )
-
-        # Rebuild patch memory as a single element (works perfectly)
         self.memory_patch_features = deque(
             [data["patch_stack"]],
             maxlen=self.warmup_window_size,
@@ -190,7 +187,6 @@ class AnomalyDetectorONNX:
         self.cached_mean_cls, self.cached_L_cls = cholesky(cls_stack)
         patch_stack = self.memory_patch_features[0]
         self.cached_mean_patch, self.cached_L_patch = cholesky(patch_stack)
-
         self.threshold = float(data["threshold"])
         self.warmup_done = True
         self._warmup_state_exists = True
@@ -347,7 +343,7 @@ class AnomalyDetectorONNX:
         # --- CASE C: TRANSITION (Finish Warmup) ---
         if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
             self.warmup_done = True
-            base_path = Path("//workspace/src/SPA006/dino_states") / self.camera_name
+            base_path = Path("//workspace/src/SPA006/dino_states_chol") / self.camera_name
             base_path.mkdir(parents=True, exist_ok=True)
             file_path = base_path / f"{self.camera_name}.npz"
             thrs = self.threshold
@@ -375,7 +371,7 @@ class AnomalyDetectorONNX:
         }
 
     # -------------------------------------------------
-    # Sliding window loop
+    # Loop
     # -------------------------------------------------
     def run(self, image: np.ndarray, camera_id: str):
         out = self._process_single_image(image)
