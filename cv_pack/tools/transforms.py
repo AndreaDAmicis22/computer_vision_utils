@@ -242,6 +242,12 @@ def resize(img: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
     return cv2.resize(img, target_shape[::-1], interpolation=cv2.INTER_LINEAR)
 
 
+def resize_with_aspect_ratio(image, scale_factor):
+    width = int(image.shape[1] * scale_factor)
+    height = int(image.shape[0] * scale_factor)
+    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+
+
 def random_crop(img: np.ndarray, crop_size: tuple[int, int]) -> np.ndarray:
     """
     Esegue un crop casuale.

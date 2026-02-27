@@ -9,8 +9,8 @@ MODEL_SIZE_MAP = {
     "s": "vit_small_patch16_dinov3.lvd1689m",
 }
 
-IMGSZ = 512
-SIZE = "b"
+IMGSZ = 640
+SIZE = "sp"
 
 dummy = torch.randn(1, 3, IMGSZ, IMGSZ)
 

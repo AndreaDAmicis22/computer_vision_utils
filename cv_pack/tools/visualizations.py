@@ -3,6 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def plot_image(img, figsize=(12, 6)):
+    plt.figure(figsize=figsize)
+    plt.imshow(img)
+    plt.axis("off")
+    plt.show()
+
+
 def overlay_mask_green(image, mask, alpha=0.4):
     """
     Sovrappone una maschera verde su un'immagine.

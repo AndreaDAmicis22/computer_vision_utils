@@ -249,8 +249,24 @@ class AnomalyDetectorONNX:
         mask = cv2.threshold(mask, 0, 255, cv2.THRESH_OTSU)[1]
 
         # Blend overlay with original image
-        alpha = 0.25
+        alpha = 0.15
         overlayed = cv2.addWeighted(overlay, alpha, img_np, 1 - alpha, 0)
+
+        text = f"Anomaly | id:{idx}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 2
+        thickness = 2
+        text_color = (190, 60, 0)
+
+        # Calcola le dimensioni del testo per centrarlo
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+
+        # Posizione: Metà larghezza - metà testo, altezza fissa (es. 30px dal bordo superiore)
+        text_x = (overlayed.shape[1] - text_width) // 2
+        text_y = text_height + 10
+
+        cv2.putText(overlayed, text, (text_x, text_y), font, font_scale, text_color, thickness, cv2.LINE_AA)
+
         return overlayed, mask, colored_map
 
     # -------------------------------------------------
@@ -288,7 +304,7 @@ class AnomalyDetectorONNX:
 
             # Normalization
             gpsa = np.array(self.good_patch_scores)
-            map_min = np.percentile(gpsa, 90, axis=0).reshape(grid, grid)
+            map_min = np.percentile(gpsa, 80, axis=0).reshape(grid, grid)
             map_max = map_min * 5
             anomaly_map_norm = np.clip((anomaly_map - map_min) / (map_max - map_min + 1e-6), 0.0, 1.0)
 
@@ -337,8 +353,8 @@ class AnomalyDetectorONNX:
 
             # Dynamic Threshold Update
             if len(self.good_cls_distances) > 20:
-                p99 = np.percentile(self.good_cls_distances, 99)
-                self.threshold = np.round(p99 + np.std(self.good_cls_distances) * 2, 3)
+                p99 = np.max(self.good_cls_distances)
+                self.threshold = np.round(p99 + np.std(self.good_cls_distances) * 4, 3)
 
         # --- CASE C: TRANSITION (Finish Warmup) ---
         if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
