@@ -1,8 +1,9 @@
 import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
-from cv_pack.models.auto_anomaly_cholesky.dino_onnx import AnomalyDetectorONNX
+from cv_pack.models.auto_anomaly_cholesky_wc.dino_onnx import AnomalyDetectorONNX
 
 # from packages.redis_utils import redis_utils
 
@@ -42,6 +43,32 @@ class AutoAnomaly:
         self.area_threshold = area_threshold
         self.warmup_counter = 0
 
+    def _state_exists(self, path: Path):
+        try:
+            if not path.exists():
+                path.mkdir(exist_ok=True)
+                logger.info(f"📂 State directory created: {path}")
+                return False, ""
+
+        except OSError as e:
+            logger.exception(f"❌ Cannot create directory {path}: {e}")
+            return False, ""
+        try:
+            files = list(path.glob(f"{self.camera_name}.npz"))
+            if len(files) > 0:
+                return True, files[0]
+        except Exception as e:
+            logger.warning(f"⚠️ Error searching for checkpoint files: {e}")
+        return False, ""
+
+    def try_load_warmup(self):
+        path = Path(f"/workspace/src/SPA006/dino_states_chol/{self.camera_name}")
+        exists, state_path = self._state_exists(path)
+        if exists:
+            self.swad.load_warmup(state_path)
+            logger.info("State loaded")
+            self.warmup_counter = self.warmup_window_size
+
     def _normalize(self, image: np.ndarray):
         img = image.astype(np.float32)
         min_val = img.min()
@@ -49,7 +76,7 @@ class AutoAnomaly:
         img_norm = (img - min_val) / (max_val - min_val)
         return (img_norm * 255).astype(np.uint8)
 
-    def predict(self, image: np.ndarray):
+    def predict(self, image: np.ndarray, camera_id: str):
         """
         Performs anomaly detection on a single input image.
 
@@ -67,7 +94,7 @@ class AutoAnomaly:
             is_anomalous (bool): Boolean flag indicating if an anomaly was detected.
                                  Always False during the warmup phase.
         """
-        out_img, drawn_contours, colored_map, is_anomalous = self.swad.run(image)
+        out_img, drawn_contours, colored_map, is_anomalous = self.swad.run(image, camera_id)
         if self.warmup_counter < self.warmup_window_size:
             self.warmup_counter += 1
             return out_img, drawn_contours, colored_map, False
