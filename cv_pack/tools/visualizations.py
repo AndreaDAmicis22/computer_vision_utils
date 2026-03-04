@@ -3,9 +3,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_image(img, figsize=(12, 6)):
+def plot_image(img, title=None, figsize=(12, 6)):
     plt.figure(figsize=figsize)
     plt.imshow(img)
+    if title:
+        plt.title(title)
     plt.axis("off")
     plt.show()
 
