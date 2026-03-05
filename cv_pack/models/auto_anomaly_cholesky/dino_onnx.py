@@ -54,6 +54,9 @@ class AnomalyDetectorONNX:
         global_area_threshold=300,
         target_img_size=512,
         anomaly_threshold=0.6,
+        ramp_start=10,
+        ramp_end=40,
+        start_gamma=0.3,
     ):
         self.warmup_window_size = warmup_window_size
         self.inference_window_size = inference_window_size
@@ -61,6 +64,10 @@ class AnomalyDetectorONNX:
         self.global_area_threshold = global_area_threshold
         self.anomaly_threshold = anomaly_threshold
         self.target_img_size = target_img_size
+        self.ramp_start = ramp_start
+        self.ramp_end = ramp_end
+        self.start_gamma = start_gamma
+        self.gamma = start_gamma
 
         # ONNX Runtime session
         devices = ov.Core().available_devices
@@ -275,7 +282,13 @@ class AnomalyDetectorONNX:
 
             if len(self.good_cls_distances) > 1:
                 p99 = np.percentile(self.good_cls_distances, 90)
-                self.threshold = np.round(p99, 3)
+                progress = np.clip((self.global_idx - self.ramp_start) / (self.ramp_end - self.ramp_start + 1e-6), 0, 1)
+                self.gamma = (
+                    np.round(self.start_gamma + (1.0 - self.start_gamma) * progress, 3)
+                    if self.global_idx > self.ramp_start
+                    else self.start_gamma
+                )
+                self.threshold = np.round(self.gamma * p99, 3)
 
         if not self.warmup_done and len(self.memory_cls_features) >= self.warmup_window_size:
             self.warmup_done = True
@@ -300,6 +313,7 @@ class AnomalyDetectorONNX:
             f"Image {out['idx']} | dist={out['dist_cls']:.3f} | "
             f"thresh={out['threshold']:.3f} | anomaly={out['is_anomaly']} | "
             f"warmup_done={self.warmup_done} | memory={len(self.memory_cls_features)} | "
+            f"gamma={self.gamma}"
         )
 
         if out["is_anomaly"]:

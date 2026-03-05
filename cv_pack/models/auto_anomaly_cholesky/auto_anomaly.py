@@ -19,6 +19,9 @@ class AutoAnomaly:
         anomaly_threshold: float = 0.6,
         area_threshold: int = 10,
         global_area_threshold: int = 100,
+        ramp_start: int = 10,
+        ramp_end: int = 40,
+        start_gamma: float = 0.3,
     ):
         """
         Initializes the auto-anomaly detector based on Sliding Window and ONNX.
@@ -39,6 +42,9 @@ class AutoAnomaly:
             global_area_threshold=global_area_threshold,
             target_img_size=target_img_size,
             anomaly_threshold=anomaly_threshold,
+            ramp_start=ramp_start,
+            ramp_end=ramp_end,
+            start_gamma=start_gamma,
         )
         self.warmup_window_size = warmup_window_size
         self.area_threshold = area_threshold
