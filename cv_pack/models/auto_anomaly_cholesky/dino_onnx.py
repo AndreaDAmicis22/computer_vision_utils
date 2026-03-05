@@ -6,8 +6,7 @@ import numpy as np
 import onnxruntime as ort
 import openvino as ov
 from matplotlib import pyplot as plt
-
-# from scipy.linalg import solve_triangular
+from scipy.linalg import solve_triangular
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s.%(msecs)03d | %(threadName)s | %(message)s", datefmt="%H:%M:%S"
@@ -36,8 +35,9 @@ def mahalanobis_cholesky(diff, L):
     L: (D, D) - Lower triangular matrix from cholesky(cov)
     """
     # Solve L*y = diff.T -> y is (D, N)
+    # y = np.linalg.solve(L, diff.T)
     # Using solve_triangular is faster than general np.linalg.solve
-    y = np.linalg.solve(L, diff.T)
+    y = solve_triangular(L, diff.T, lower=True)
     return np.sum(y**2, axis=0)
 
 
