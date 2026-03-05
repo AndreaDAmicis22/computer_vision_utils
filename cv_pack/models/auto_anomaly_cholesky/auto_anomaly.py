@@ -14,6 +14,7 @@ class AutoAnomaly:
         self,
         onnx_model_path: str = "/home/aisent/Desktop/dev/utils/utils/models/auto_anomaly/assets/vit_base_patch16_dinov3.lvd1689m_400.onnx",
         warmup_window_size: int = 15,
+        inference_window_size=30,
         target_img_size: int = 512,
         anomaly_threshold: float = 0.6,
         area_threshold: int = 10,
@@ -33,6 +34,7 @@ class AutoAnomaly:
         self.swad = AnomalyDetectorONNX(
             onnx_model_path=onnx_model_path,
             warmup_window_size=warmup_window_size,
+            inference_window_size=inference_window_size,
             area_threshold=area_threshold,
             global_area_threshold=global_area_threshold,
             target_img_size=target_img_size,

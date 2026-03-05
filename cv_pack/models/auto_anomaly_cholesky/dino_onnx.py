@@ -49,12 +49,14 @@ class AnomalyDetectorONNX:
         self,
         onnx_model_path,
         warmup_window_size=20,
+        inference_window_size=30,
         area_threshold=200,
         global_area_threshold=300,
         target_img_size=512,
         anomaly_threshold=0.6,
     ):
         self.warmup_window_size = warmup_window_size
+        self.inference_window_size = inference_window_size
         self.area_threshold = area_threshold
         self.global_area_threshold = global_area_threshold
         self.anomaly_threshold = anomaly_threshold
@@ -84,11 +86,16 @@ class AnomalyDetectorONNX:
             self.output_names = [o.name for o in self.session.get_outputs()]
             assert len(self.output_names) == 2, "ONNX model must output (cls, patches)"
 
+        assert self.warmup_window_size <= self.inference_window_size, (
+            f"Errore di configurazione: warmup_window_size ({self.warmup_window_size}) "
+            f"non può essere maggiore di inference_window_size ({self.inference_window_size})"
+        )
+
         # Memory
-        self.memory_cls_features = deque(maxlen=warmup_window_size)
-        self.memory_patch_features = deque(maxlen=warmup_window_size)
-        self.good_cls_distances = deque(maxlen=warmup_window_size)
-        self.good_patch_scores = deque(maxlen=warmup_window_size)
+        self.memory_cls_features = deque(maxlen=inference_window_size)
+        self.memory_patch_features = deque(maxlen=inference_window_size)
+        self.good_cls_distances = deque(maxlen=inference_window_size)
+        self.good_patch_scores = deque(maxlen=inference_window_size)
 
         self.cached_mean_cls = None
         self.cached_L_cls = None
@@ -227,7 +234,7 @@ class AnomalyDetectorONNX:
             # Normalization
             gpsa = np.array(self.good_patch_scores)
             map_min = np.percentile(gpsa, 99, axis=0).reshape(grid, grid)
-            map_max = map_min * 6
+            map_max = map_min * 5
             anomaly_map_norm = np.clip((anomaly_map - map_min) / (map_max - map_min + 1e-6), 0.0, 1.0)
 
             # Post-Processing(Resize & Border Cleaning)
