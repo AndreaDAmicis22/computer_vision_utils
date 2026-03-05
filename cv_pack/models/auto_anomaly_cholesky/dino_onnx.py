@@ -172,7 +172,6 @@ class AnomalyDetectorONNX:
         cm = plt.get_cmap("inferno")
         colored_map = cm(anomaly_map_resized)
         colored_map = (colored_map[:, :, :3] * 255).astype(np.uint8)
-        colored_map = cv2.cvtColor(colored_map, cv2.COLOR_RGB2BGR)
 
         # Create mask of regions above threshold
         mask = anomaly_map_resized > threshold
@@ -191,9 +190,9 @@ class AnomalyDetectorONNX:
 
         text = f"{text}| id:{idx}"
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 2
-        thickness = 2
-        text_color = (190, 60, 0)
+        font_scale = 3
+        thickness = 3
+        text_color = color
 
         # Calcola le dimensioni del testo per centrarlo
         (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
