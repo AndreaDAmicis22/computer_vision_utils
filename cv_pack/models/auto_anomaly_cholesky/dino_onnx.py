@@ -145,6 +145,7 @@ class AnomalyDetectorONNX:
         anomaly_map_norm,
         threshold=0.6,
         color=(255, 100, 0),
+        text="anomaly",
     ):
         """
         Overlay only anomaly regions above `threshold`.
@@ -188,7 +189,7 @@ class AnomalyDetectorONNX:
         alpha = 0.15
         overlayed = cv2.addWeighted(overlay, alpha, img_np, 1 - alpha, 0)
 
-        text = f"Anomaly | id:{idx}"
+        text = f"{text}| id:{idx}"
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 2
         thickness = 2
@@ -322,10 +323,20 @@ class AnomalyDetectorONNX:
                 out["image"],
                 out["anomaly_map_norm"],
                 threshold=self.anomaly_threshold,
+                color=(255, 100, 0),
+                text="Anomaly",
             )
             return overlayed, mask, colored_map, True
 
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         colored_map = np.zeros_like(image)
+        overlayed, mask, colored_map = self._create_anomaly_image_threshold(
+            out["idx"],
+            out["image"],
+            out["anomaly_map_norm"] if out["anomaly_map_norm"] is not None else mask,
+            threshold=self.anomaly_threshold,
+            color=(0, 191, 6),
+            text="Healthy",
+        )
 
-        return image.copy(), mask, colored_map, False
+        return overlayed, mask, colored_map, False
