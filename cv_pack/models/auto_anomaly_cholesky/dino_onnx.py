@@ -334,8 +334,8 @@ class AnomalyDetectorONNX:
             out["image"],
             out["anomaly_map_norm"] if out["anomaly_map_norm"] is not None else mask,
             threshold=self.anomaly_threshold,
-            color=(0, 191, 6),
-            text="Healthy",
+            color=(0, 191, 6) if self.warmup_done else (7, 76, 179),
+            text="Healthy" if self.warmup_done else "Warmup",
         )
 
         return overlayed, mask, colored_map, False
